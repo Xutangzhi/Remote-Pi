@@ -1,0 +1,231 @@
+import { createReadStream } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { extname, join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { Plugin } from "vite";
+import { defineConfig, normalizePath } from "vite";
+import { effectivePiWebConfig } from "./src/config";
+import { DEPLOYMENT_MANIFEST_CONTENT_TYPE, DEPLOYMENT_MANIFEST_PATH, createDeploymentFlavorResolver, deploymentIdentityAssetForPath, deploymentManifestForFlavor, isDeploymentIdentityAssetPath } from "./src/server/deploymentIdentity";
+import { detectPiWebInstallation } from "./src/server/piWebStatus";
+
+const { config } = effectivePiWebConfig();
+const apiPort = config.port ?? 8504;
+const docsRoot = resolve("docs");
+const docsPrefix = "/site";
+const clientPublicRoot = resolve("src/client/public");
+
+// The dev deployment gets the dev brand identity even when the UI is served
+// by the Vite dev server (production serving does the same swap in Fastify).
+const deploymentFlavor = createDeploymentFlavorResolver(() => detectPiWebInstallation());
+
+const contentTypes: Record<string, string> = {
+  ".css": "text/css; charset=utf-8",
+  ".gif": "image/gif",
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".md": "text/markdown; charset=utf-8",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".txt": "text/plain; charset=utf-8",
+  ".webm": "video/webm",
+  ".xml": "application/xml; charset=utf-8",
+};
+
+type MiddlewareNext = (error?: unknown) => void;
+
+async function serveDevDocs(request: IncomingMessage, response: ServerResponse, next: MiddlewareNext): Promise<void> {
+  const requestUrl = request.url;
+  if (requestUrl === undefined) {
+    next();
+    return;
+  }
+
+  const url = new URL(requestUrl, "http://localhost");
+  if (url.pathname === docsPrefix) {
+    response.statusCode = 302;
+    response.setHeader("Location", `${docsPrefix}/`);
+    response.end();
+    return;
+  }
+  if (!url.pathname.startsWith(`${docsPrefix}/`)) {
+    next();
+    return;
+  }
+
+  const relativePath = decodeURIComponent(url.pathname.slice(docsPrefix.length + 1)) || "index.html";
+  const requestedPath = relativePath.endsWith("/") ? join(relativePath, "index.html") : relativePath;
+  const candidatePaths = extname(requestedPath) === "" ? [requestedPath, `${requestedPath}.html`] : [requestedPath];
+
+  for (const candidatePath of candidatePaths) {
+    const filePath = resolve(docsRoot, candidatePath);
+    if (filePath !== docsRoot && !filePath.startsWith(`${docsRoot}${sep}`)) {
+      response.statusCode = 403;
+      response.end("Forbidden");
+      return;
+    }
+
+    try {
+      const fileStat = await stat(filePath);
+      if (!fileStat.isFile()) continue;
+
+      response.statusCode = 200;
+      response.setHeader("Content-Type", contentTypes[extname(filePath)] ?? "application/octet-stream");
+      response.setHeader("Cache-Control", "no-store");
+      createReadStream(filePath).pipe(response);
+      return;
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? error.code : undefined;
+      if (code === "ENOENT") continue;
+      next(error);
+      return;
+    }
+  }
+
+  response.statusCode = 404;
+  response.end("Not found");
+}
+
+function devDocsPlugin(): Plugin {
+  return {
+    name: "pi-web-dev-docs",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        void serveDevDocs(request, response, next);
+      });
+    },
+  };
+}
+
+async function serveDevDeploymentIdentity(request: IncomingMessage, response: ServerResponse, next: MiddlewareNext): Promise<void> {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    next();
+    return;
+  }
+  const requestUrl = request.url;
+  if (requestUrl === undefined) {
+    next();
+    return;
+  }
+  const { pathname } = new URL(requestUrl, "http://localhost");
+  const isManifest = pathname === DEPLOYMENT_MANIFEST_PATH;
+  if (!isManifest && !isDeploymentIdentityAssetPath(pathname)) {
+    next();
+    return;
+  }
+  if ((await deploymentFlavor()) !== "dev") {
+    next();
+    return;
+  }
+
+  const serve = async (): Promise<{ contentType: string; body: string | undefined; filePath: string | undefined } | undefined> => {
+    if (isManifest) {
+      const manifest = await readFile(join(clientPublicRoot, DEPLOYMENT_MANIFEST_PATH.slice(1)), "utf8");
+      return { contentType: DEPLOYMENT_MANIFEST_CONTENT_TYPE, body: deploymentManifestForFlavor(manifest, "dev"), filePath: undefined };
+    }
+    const asset = deploymentIdentityAssetForPath(pathname, "dev");
+    if (asset === undefined) return undefined;
+    return { contentType: asset.contentType, body: undefined, filePath: join(clientPublicRoot, asset.fileName) };
+  };
+
+  let serving: Awaited<ReturnType<typeof serve>>;
+  try {
+    serving = await serve();
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    if (code === "ENOENT") {
+      next();
+      return;
+    }
+    next(error);
+    return;
+  }
+  if (serving === undefined) {
+    next();
+    return;
+  }
+  response.statusCode = 200;
+  response.setHeader("Content-Type", serving.contentType);
+  response.setHeader("Cache-Control", "no-store");
+  if (serving.body !== undefined) {
+    response.end(serving.body);
+    return;
+  }
+  if (serving.filePath === undefined) {
+    next();
+    return;
+  }
+  createReadStream(serving.filePath).pipe(response);
+}
+
+function devDeploymentIdentityPlugin(): Plugin {
+  return {
+    name: "pi-web-dev-deployment-identity",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        void serveDevDeploymentIdentity(request, response, next);
+      });
+    },
+  };
+}
+
+function manualRefreshPlugin(): Plugin {
+  const clientEntry = normalizePath(fileURLToPath(new URL("../client/client.mjs", import.meta.resolve("vite"))));
+  const connect = "transport.connect(createHMRHandler(handleMessage));";
+  return {
+    name: "pi-web-manual-refresh",
+    apply: "serve",
+    transform(code, id) {
+      if (id.split("?")[0] !== clientEntry) return;
+      // Vite 8 starts its client even with hmr:false and ws:false. An unanswered
+      // handshake blocks Chromium's subsequent /api WebSockets to the same host.
+      // Keep Vite's helpers (dynamic plugin imports need injectQuery), but never
+      // start its reload transport. Removing the HTML script alone is not enough.
+      // Fail loudly on a Vite upgrade rather than silently reintroducing the hang.
+      if (code.split(connect).length !== 2) {
+        throw new Error("Vite client startup changed; update PI WEB's manual-refresh transform");
+      }
+      return { code: code.replace(connect, "/* PI WEB uses manual browser refresh. */"), map: null };
+    },
+  };
+}
+
+export default defineConfig({
+  plugins: [devDocsPlugin(), devDeploymentIdentityPlugin(), manualRefreshPlugin()],
+  root: "src/client",
+  base: "./",
+  build: {
+    outDir: "../../dist/client",
+    emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+          if (id.includes("@codemirror/legacy-modes")) return "vendor-editor-legacy";
+          if (id.includes("@lezer/common") || id.includes("@lezer/highlight") || id.includes("@lezer/lr")) return "vendor-editor-core";
+          if (id.includes("@codemirror/lang-") || id.includes("@lezer/")) return "vendor-editor-languages";
+          if (id.includes("@codemirror") || id.includes("codemirror")) return "vendor-editor-core";
+          if (id.includes("@xterm")) return "vendor-terminal";
+          return undefined;
+        },
+      },
+    },
+  },
+  server: {
+    // Manual UI refresh is intentional: Vite reloads after an established dev
+    // socket disconnects, including when iPadOS suspends a background PWA.
+    // Disable both the listener and client connection (manualRefreshPlugin).
+    // The application's /api WebSocket proxy remains enabled.
+    hmr: false,
+    ws: false,
+    port: 8505,
+    strictPort: true,
+    ...(config.allowedHosts === undefined ? {} : { allowedHosts: config.allowedHosts }),
+    proxy: {
+      "/api": { target: `http://localhost:${String(apiPort)}`, ws: true },
+      "/pi-web-plugins": { target: `http://localhost:${String(apiPort)}` },
+    },
+  },
+});

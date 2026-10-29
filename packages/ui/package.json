@@ -1,0 +1,25 @@
+{
+  "name": "@remote-pi/ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./ChatTranscript": "./src/ChatTranscript.tsx",
+    "./SessionTree": "./src/SessionTree.tsx",
+    "./ResizeHandle": "./src/ResizeHandle.tsx",
+    "./useDialogFocus": "./src/useDialogFocus.ts",
+    "./useSessionIndicators": "./src/useSessionIndicators.ts",
+    "./api": "./src/api.ts",
+    "./styles.css": "./src/styles.css",
+    "./tokens.css": "./src/tokens.css"
+  },
+  "dependencies": {
+    "@remote-pi/core": "0.0.0",
+    "lucide-react": "^0.468.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "peerDependencies": {
+    "react": "^19.3.1"
+  }
+}

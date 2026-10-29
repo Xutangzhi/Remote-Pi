@@ -1,0 +1,72 @@
+import { isPiWebBundledPluginId, isPiWebPluginId, isReservedPiWebPluginId } from "./pluginIds.js";
+
+const MACHINE_PLUGIN_ID_PREFIX = "machine.";
+
+export interface MachineScopedPluginIdParts {
+  machineId: string;
+  pluginId: string;
+}
+
+export function machineScopedPluginId(machineId: string, pluginId: string): string {
+  requireMachinePluginId(machineId, pluginId);
+  if (isReservedPiWebPluginId(pluginId)) throw new Error(`Reserved PI WEB plugin id: ${pluginId}`);
+  return scopedPluginId(machineId, pluginId);
+}
+
+/** Machine-scope a host-validated plugin from PI WEB's bundled-only namespace. */
+export function machineScopedBundledPluginId(machineId: string, pluginId: string): string {
+  requireMachinePluginId(machineId, pluginId);
+  if (!isPiWebBundledPluginId(pluginId)) throw new Error(`PI WEB bundled plugin id is required: ${pluginId}`);
+  return scopedPluginId(machineId, pluginId);
+}
+
+/** Machine-scope an id only after its host-authored manifest has been validated. */
+export function machineScopedManifestPluginId(machineId: string, pluginId: string): string {
+  return isPiWebBundledPluginId(pluginId)
+    ? machineScopedBundledPluginId(machineId, pluginId)
+    : machineScopedPluginId(machineId, pluginId);
+}
+
+export function parseMachineScopedPluginId(pluginId: string): MachineScopedPluginIdParts | undefined {
+  if (!pluginId.startsWith(MACHINE_PLUGIN_ID_PREFIX)) return undefined;
+  const rest = pluginId.slice(MACHINE_PLUGIN_ID_PREFIX.length);
+  const separator = rest.indexOf(".");
+  if (separator < 1) return undefined;
+
+  const encodedMachineId = rest.slice(0, separator);
+  const sourcePluginId = rest.slice(separator + 1);
+  if (!isHexString(encodedMachineId)
+    || !isPiWebPluginId(sourcePluginId)
+    || (isReservedPiWebPluginId(sourcePluginId) && !isPiWebBundledPluginId(sourcePluginId))) return undefined;
+
+  const machineId = hexToString(encodedMachineId);
+  if (machineId === "") return undefined;
+  return { machineId, pluginId: sourcePluginId };
+}
+
+function requireMachinePluginId(machineId: string, pluginId: string): void {
+  if (machineId === "") throw new Error("Machine id is required");
+  if (!isPiWebPluginId(pluginId)) throw new Error(`Invalid PI WEB plugin id: ${pluginId}`);
+}
+
+function scopedPluginId(machineId: string, pluginId: string): string {
+  return `${MACHINE_PLUGIN_ID_PREFIX}${stringToHex(machineId)}.${pluginId}`;
+}
+
+function stringToHex(value: string): string {
+  return [...new TextEncoder().encode(value)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function hexToString(value: string): string {
+  const bytes = new Uint8Array(value.length / 2);
+  for (let index = 0; index < value.length; index += 2) {
+    bytes[index / 2] = Number.parseInt(value.slice(index, index + 2), 16);
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+function isHexString(value: string): boolean {
+  return value.length > 0 && value.length % 2 === 0 && /^[0-9a-f]+$/u.test(value);
+}

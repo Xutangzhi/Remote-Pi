@@ -1,0 +1,13 @@
+import { spawnSync } from 'node:child_process';
+import { existsSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
+const sdk = process.env.ANDROID_HOME || resolve(homedir(), 'Library/Android/sdk');
+if (!existsSync(resolve(sdk, 'platforms/android-36'))) throw new Error('需要 Android SDK Platform 36。请在 Android Studio SDK Manager 中安装。');
+let java = process.env.JAVA_HOME;
+const javaVersion = java ? spawnSync(resolve(java, 'bin/java'), ['-version'], { encoding: 'utf8' }).stderr : '';
+if ((!java || !/version \"(?:2[1-9]|[3-9][0-9])\./.test(javaVersion)) && process.platform === 'darwin') java = spawnSync('/usr/libexec/java_home', ['-v', '21'], { encoding: 'utf8' }).stdout.trim();
+writeFileSync('android/local.properties', `sdk.dir=${sdk.replaceAll('\\', '\\\\')}\n`);
+const result = spawnSync(process.platform === 'win32' ? 'gradlew.bat' : './gradlew', process.argv.slice(2).length ? process.argv.slice(2) : ['testDebugUnitTest', 'assembleDebug'], { cwd: 'android', stdio: 'inherit', env: { ...process.env, ...(java ? { JAVA_HOME: java } : {}), ANDROID_HOME: sdk } });
+if (result.error) throw result.error;
+process.exit(result.status ?? 1);

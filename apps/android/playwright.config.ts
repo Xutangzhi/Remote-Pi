@@ -1,0 +1,2 @@
+import { defineConfig } from '@playwright/test';
+export default defineConfig({ testDir: 'tests/ui', workers: 1, timeout: 30000, use: { browserName: 'chromium', channel: process.env.PLAYWRIGHT_CHANNEL, viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, trace: 'retain-on-failure' }, webServer: { command: 'npx vite preview --host 127.0.0.1 --port 4179', port: 4179, reuseExistingServer: false } });

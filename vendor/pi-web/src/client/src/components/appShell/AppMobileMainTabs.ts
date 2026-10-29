@@ -1,0 +1,195 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
+import { LitElement, css, html, type TemplateResult } from "lit";
+import { customElement, property, query, state } from "lit/decorators.js";
+import type { QualifiedContributionId } from "../../plugins/types";
+import { renderNavigationMenuIcon, renderAppTabIcon, type AppTabBuiltinIcon } from "../tabIcons";
+import { uiButtonStyles, uiToolbarStyles, uiTabStyles } from "../ui/controlStyles";
+
+export type AppMobileMainTabBuiltinIcon = AppTabBuiltinIcon;
+export type AppMobileMainTabIcon = AppMobileMainTabBuiltinIcon | TemplateResult;
+
+export type AppMobileMainTabId = "navigation" | "chat" | QualifiedContributionId;
+
+export interface AppMobileMainTab {
+  id: AppMobileMainTabId;
+  label: string;
+  icon?: AppMobileMainTabIcon;
+  badge?: unknown;
+  badgeLabel?: string | undefined;
+  badgeTone?: "unread" | undefined;
+  className?: string | undefined;
+}
+
+@customElement("app-mobile-main-tabs")
+export class AppMobileMainTabs extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
+  @property({ attribute: false }) tabs: AppMobileMainTab[] = [];
+  @property({ attribute: false }) leadingControl: TemplateResult | null = null;
+  @property({ attribute: false }) trailingControl: TemplateResult | null = null;
+  @property({ type: Boolean }) controlsOnly = false;
+  @property({ attribute: false }) onShowNavigation?: () => void;
+  @property({ type: Boolean }) hiddenActiveDestination = false;
+  @property({ attribute: false }) selectedTab: AppMobileMainTabId | undefined = "chat";
+  @property({ attribute: false }) onSelect?: (tab: AppMobileMainTabId) => void;
+  @query(".mobile-tabs") private mobileTabs?: HTMLElement | null;
+  @state() private canScrollLeft = false;
+  @state() private canScrollRight = false;
+  private observedMobileTabs: HTMLElement | undefined;
+  private mobileTabsResizeObserver: ResizeObserver | undefined;
+
+  override disconnectedCallback(): void {
+    this.mobileTabsResizeObserver?.disconnect();
+    this.mobileTabsResizeObserver = undefined;
+    this.observedMobileTabs = undefined;
+    super.disconnectedCallback();
+  }
+
+  override firstUpdated(): void {
+    this.observeMobileTabs();
+    this.updateScrollState();
+  }
+
+  override updated(): void {
+    this.observeMobileTabs();
+    this.updateScrollState();
+  }
+
+  override render() {
+    const fallbackLabels = this.fallbackLabels();
+    return html`
+      <div class=${this.frameClass()}>
+        ${this.leadingControl}
+        <div class="mobile-tabs ui-tabs ui-tabs--primary" @scroll=${this.onMobileTabsScroll}>
+          ${this.tabs.map((tab) => {
+            const selected = this.selectedTab === tab.id;
+            return html`
+              <button class=${this.tabClass(tab)} title=${tab.label} aria-label=${this.tabAriaLabel(tab)} aria-pressed=${String(selected)} @click=${() => { this.onSelect?.(tab.id); }}>
+                ${this.renderTabMark(tab, fallbackLabels)}
+                <span class="tab-label">${tab.label}</span>
+                ${this.renderBadge(tab.badge, tab.badgeTone)}
+              </button>
+            `;
+          })}
+          ${this.onShowNavigation === undefined ? null : html`<button type="button" class=${`ui-button ui-button--icon ui-tab navigation-menu-button${this.hiddenActiveDestination ? " selected" : ""}`} title="Navigation" aria-label="Navigation" aria-haspopup="dialog" @click=${this.onShowNavigation}>${renderNavigationMenuIcon()}</button>`}
+        </div>
+        ${this.trailingControl}
+      </div>
+    `;
+  }
+
+  private frameClass(): string {
+    return `mobile-tabs-frame${this.controlsOnly ? " controls-only" : ""}${this.canScrollLeft ? " can-scroll-left" : ""}${this.canScrollRight ? " can-scroll-right" : ""}`;
+  }
+
+  private tabClass(tab: AppMobileMainTab): string {
+    return [
+      "ui-button", "ui-tab",
+      ...(tab.className === undefined ? [] : [tab.className]),
+      ...(this.selectedTab === tab.id ? ["selected"] : []),
+    ].join(" ");
+  }
+
+  private tabAriaLabel(tab: AppMobileMainTab): string {
+    const badge = tab.badgeLabel ?? (typeof tab.badge === "string" || typeof tab.badge === "number" ? String(tab.badge).trim() : "");
+    return badge === "" ? tab.label : `${tab.label}, ${badge}`;
+  }
+
+  private renderBadge(badge: unknown, tone: AppMobileMainTab["badgeTone"]) {
+    if (badge === undefined || badge === "") return null;
+    return html`<span class=${`tab-badge${tone === undefined ? "" : ` ${tone}`}`}>${badge}</span>`;
+  }
+
+  private renderTabMark(tab: AppMobileMainTab, fallbackLabels: Map<AppMobileMainTabId, string>) {
+    return tab.icon === undefined
+      ? html`<span class="tab-fallback" aria-hidden="true">${fallbackLabels.get(tab.id) ?? this.initialsLabel(tab.label)}</span>`
+      : renderAppTabIcon(tab.icon);
+  }
+
+  private fallbackLabels(): Map<AppMobileMainTabId, string> {
+    const fallbackTabs = this.tabs.filter((tab) => tab.icon === undefined);
+    const counts = new Map<string, number>();
+    for (const tab of fallbackTabs) {
+      const initials = this.initialsLabel(tab.label);
+      counts.set(initials, (counts.get(initials) ?? 0) + 1);
+    }
+
+    const labels = new Map<AppMobileMainTabId, string>();
+    for (const tab of fallbackTabs) {
+      const initials = this.initialsLabel(tab.label);
+      labels.set(tab.id, (counts.get(initials) ?? 0) > 1 ? this.fullFallbackLabel(tab.label) : initials);
+    }
+    return labels;
+  }
+
+  private initialsLabel(label: string): string {
+    const words = label.match(/[\p{L}\p{N}]+/gu) ?? [];
+    const initials = words.map((word) => Array.from(word)[0] ?? "").join("").toLocaleUpperCase();
+    return initials === "" ? "?" : initials;
+  }
+
+  private fullFallbackLabel(label: string): string {
+    const trimmed = label.trim();
+    return trimmed === "" ? "?" : trimmed;
+  }
+
+  private observeMobileTabs(): void {
+    const mobileTabs = this.mobileTabsElement();
+    if (this.observedMobileTabs === mobileTabs) return;
+    this.mobileTabsResizeObserver?.disconnect();
+    this.observedMobileTabs = mobileTabs;
+    this.mobileTabsResizeObserver = undefined;
+    if (mobileTabs === undefined || typeof ResizeObserver === "undefined") return;
+    this.mobileTabsResizeObserver = new ResizeObserver(() => {
+      this.updateScrollState();
+    });
+    this.mobileTabsResizeObserver.observe(mobileTabs);
+  }
+
+  private updateScrollState(): void {
+    const mobileTabs = this.mobileTabsElement();
+    const maxScrollLeft = mobileTabs === undefined ? 0 : Math.max(0, mobileTabs.scrollWidth - mobileTabs.clientWidth);
+    const canScrollLeft = mobileTabs !== undefined && mobileTabs.scrollLeft > 1;
+    const canScrollRight = mobileTabs !== undefined && maxScrollLeft - mobileTabs.scrollLeft > 1;
+    if (this.canScrollLeft !== canScrollLeft) this.canScrollLeft = canScrollLeft;
+    if (this.canScrollRight !== canScrollRight) this.canScrollRight = canScrollRight;
+  }
+
+  private mobileTabsElement(): HTMLElement | undefined {
+    const mobileTabs = this.mobileTabs;
+    return mobileTabs instanceof HTMLElement ? mobileTabs : undefined;
+  }
+
+  private readonly onMobileTabsScroll = () => {
+    this.updateScrollState();
+  };
+
+  static override styles = [uiButtonStyles, uiToolbarStyles, uiTabStyles, css`
+    :host { flex: 0 0 auto; min-width: 0; }
+    .mobile-tabs-frame { position: relative; display: flex; align-items: stretch; flex: 0 0 auto; min-width: 0; min-height: 44px; border-bottom: 1px solid var(--pi-border); background: var(--pi-bg); }
+    .mobile-tabs-frame::before, .mobile-tabs-frame::after { content: ""; position: absolute; top: 0; bottom: 0; z-index: 2; width: 20px; opacity: 0; pointer-events: none; transition: opacity .15s ease; }
+    .mobile-tabs-frame::before { left: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
+    .mobile-tabs-frame::after { right: 0; background: linear-gradient(270deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
+    .mobile-tabs-frame.can-scroll-left::before, .mobile-tabs-frame.can-scroll-right::after { opacity: 1; }
+    .mobile-tabs { flex: 1 1 auto; }
+    .controls-only .mobile-tabs { display: none; }
+    .panel-toggle { border-inline-end: 1px solid var(--pi-border-muted); }
+    .panel-toggle[data-panel-toggle="workspace"] { margin-inline-start: auto; border-inline-start: 1px solid var(--pi-border-muted); border-inline-end: 0; }
+    .mobile-tabs .navigation-tab { display: none; }
+    .tab-icon { flex: 0 0 auto; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+    .tab-custom-icon { flex: 0 0 auto; width: 18px; height: 18px; display: inline-grid; place-items: center; color: currentColor; pointer-events: none; }
+    .tab-custom-icon svg { width: 18px; height: 18px; pointer-events: none; }
+    .tab-fallback { display: none; font-weight: 650; letter-spacing: .01em; pointer-events: none; }
+    .tab-label { min-width: 0; }
+    .tab-badge { flex: 0 0 auto; display: inline-block; min-width: 14px; margin-left: 0; border: 1px solid var(--pi-success-border); border-radius: 999px; background: var(--pi-success-surface); color: var(--pi-success); padding: 0 5px; font-size: 11px; line-height: 16px; text-align: center; }
+    .tab-badge.unread { border-color: var(--pi-accent-border); background: var(--pi-selection-bg); color: var(--pi-accent); }
+    @media (max-width: 760px) {
+      .mobile-tabs .navigation-tab { display: inline-flex; }
+      .tab-fallback { display: inline-block; }
+      .tab-badge { min-width: 13px; padding: 0 4px; font-size: 10px; line-height: 13px; }
+    }
+  `];
+}

@@ -1,0 +1,27 @@
+{
+  "name": "remote-pi-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=apps/desktop",
+    "build": "npm run build --workspace=apps/desktop",
+    "start": "npm run start --workspace=apps/desktop",
+    "pack": "npm run pack --workspace=apps/desktop",
+    "dist": "npm run dist --workspace=apps/desktop",
+    "build:all": "npm run build --workspace=apps/desktop && npm run build --workspace=apps/android",
+    "android:dev": "npm run dev --workspace=apps/android",
+    "android:sync": "npm run sync --workspace=apps/android",
+    "android:build": "npm run android:build --workspace=apps/android",
+    "test": "npm run test --workspace=apps/desktop && npm run test --workspace=apps/android",
+    "test:e2e": "npm run test:e2e --workspace=apps/desktop",
+    "test:ui:android": "npm run test:ui --workspace=apps/android",
+    "test:native:android": "npm run test:native --workspace=apps/android",
+    "test:device:android": "npm run test:device --workspace=apps/android"
+  }
+}

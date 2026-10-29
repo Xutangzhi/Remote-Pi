@@ -1,0 +1,85 @@
+import type { QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution } from "./plugins/types";
+
+import type { PiWebThemePreference } from "../../shared/apiTypes";
+import { parseThemePreference } from "../../shared/themePreference";
+
+export type ThemePreference = PiWebThemePreference;
+
+export interface ResolveThemePreferenceOptions {
+  themes: readonly QualifiedThemeContribution[];
+  themePairs: readonly QualifiedThemePairContribution[];
+  preference: ThemePreference;
+  prefersLight: boolean;
+  fallbackThemeId?: QualifiedContributionId;
+}
+
+export interface ThemePreferenceResolution {
+  selectedTheme: QualifiedThemeContribution | undefined;
+  activeTheme: QualifiedThemeContribution | undefined;
+  selectedThemePair: QualifiedThemePairContribution | undefined;
+  fallbackTheme: QualifiedThemeContribution | undefined;
+}
+
+export const CLASSIC_THEME_ID: QualifiedContributionId = "themes:classic";
+export const DEFAULT_THEME_ID: QualifiedContributionId = "themes:pi-web-dark";
+export const DEFAULT_THEME_PREFERENCE: ThemePreference = { themeId: DEFAULT_THEME_ID, auto: true };
+export const THEME_STORAGE_KEY = "pi-web-app-theme";
+
+export function readStoredThemePreference(): ThemePreference | undefined {
+  try {
+    const value = window.localStorage.getItem(THEME_STORAGE_KEY);
+    return value === null ? undefined : parseThemePreference(JSON.parse(value));
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeStoredThemePreference(preference: ThemePreference): void {
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(preference));
+  } catch {
+    // Ignore storage failures; the selected theme can still apply for this tab.
+  }
+}
+
+export function clearStoredThemePreference(): void {
+  try {
+    window.localStorage.removeItem(THEME_STORAGE_KEY);
+  } catch {
+    // As with saving, following the default can still apply for this tab.
+  }
+}
+
+export function effectiveThemePreference(local: ThemePreference | undefined, configuredDefault: ThemePreference | undefined): ThemePreference {
+  return local ?? configuredDefault ?? DEFAULT_THEME_PREFERENCE;
+}
+
+// Palette declarations are owned by the selected theme's contributed stylesheets.
+export function applyPiWebTheme(theme: QualifiedThemeContribution): void {
+  const root = document.documentElement;
+  root.dataset["piWebTheme"] = theme.id;
+  root.style.colorScheme = theme.colorScheme;
+}
+
+export function resolveThemePreference(options: ResolveThemePreferenceOptions): ThemePreferenceResolution {
+  const fallbackTheme = findFallbackTheme(options.themes, options.fallbackThemeId ?? CLASSIC_THEME_ID);
+  const selectedTheme = options.themes.find((candidate) => candidate.id === options.preference.themeId) ?? fallbackTheme;
+  if (selectedTheme === undefined) {
+    return { selectedTheme: undefined, activeTheme: undefined, selectedThemePair: undefined, fallbackTheme };
+  }
+  const selectedThemePair = findThemePairForTheme(options.themePairs, selectedTheme.id);
+  if (!options.preference.auto || selectedThemePair === undefined) {
+    return { selectedTheme, activeTheme: selectedTheme, selectedThemePair, fallbackTheme };
+  }
+  const activeThemeId = options.prefersLight ? selectedThemePair.light : selectedThemePair.dark;
+  const activeTheme = options.themes.find((candidate) => candidate.id === activeThemeId) ?? selectedTheme;
+  return { selectedTheme, activeTheme, selectedThemePair, fallbackTheme };
+}
+
+export function findFallbackTheme(themes: readonly QualifiedThemeContribution[], fallbackThemeId: QualifiedContributionId = CLASSIC_THEME_ID): QualifiedThemeContribution | undefined {
+  return themes.find((candidate) => candidate.id === fallbackThemeId) ?? themes[0];
+}
+
+export function findThemePairForTheme(themePairs: readonly QualifiedThemePairContribution[], themeId: QualifiedContributionId): QualifiedThemePairContribution | undefined {
+  return themePairs.find((pair) => pair.light === themeId || pair.dark === themeId);
+}

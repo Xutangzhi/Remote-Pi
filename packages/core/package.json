@@ -1,0 +1,15 @@
+{
+  "name": "@remote-pi/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./pi": "./src/pi.ts",
+    "./types": "./src/types.ts",
+    "./session": "./src/session.ts",
+    "./transcript": "./src/transcript.ts",
+    "./session-tree": "./src/session-tree.ts",
+    "./session-indicators": "./src/session-indicators.ts",
+    "./prompt-completions": "./src/prompt-completions.ts"
+  }
+}

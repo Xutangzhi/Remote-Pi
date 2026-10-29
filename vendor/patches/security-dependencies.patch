@@ -1,0 +1,185 @@
+diff --git a/package-lock.json b/package-lock.json
+index d57245e..9d81e68 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -36,7 +36,7 @@
+         "marked": "^18.1.1",
+         "node-pty": "^1.1.0",
+         "pi-web-typebox": "npm:typebox@1.3.37",
+-        "undici": "^8.11.2",
++        "undici": "8.12.2",
+         "ws": "^8.22.0"
+       },
+       "bin": {
+@@ -56,7 +56,7 @@
+         "dompurify": "^3.4.17",
+         "eslint": "^10.12.0",
+         "globals": "^17.13.0",
+-        "happy-dom": "^20.14.6",
++        "happy-dom": "21.0.4",
+         "knip": "^6.41.0",
+         "mermaid": "^12.2.0",
+         "tsx": "^4.23.15",
+@@ -1207,16 +1207,6 @@
+       "dev": true,
+       "license": "ISC"
+     },
+-    "node_modules/@earendil-works/pi-coding-agent/node_modules/undici": {
+-      "version": "8.10.2",
+-      "resolved": "https://registry.npmjs.org/undici/-/undici-8.10.2.tgz",
+-      "integrity": "sha512-/y4/bH9YNU5hi9NIrpOuvGXFcxrj3CMrV+/AYpowAYTpHn8gX/XPFjNy766FPoYY0miQhdW977JFWKGNhBdwyQ==",
+-      "dev": true,
+-      "license": "MIT",
+-      "engines": {
+-        "node": ">=22.19.0"
+-      }
+-    },
+     "node_modules/@earendil-works/pi-mcp": {
+       "version": "1.2.0",
+       "resolved": "https://registry.npmjs.org/@earendil-works/pi-mcp/-/pi-mcp-1.2.0.tgz",
+@@ -1925,9 +1915,9 @@
+       }
+     },
+     "node_modules/@fastify/ajv-compiler/node_modules/ajv/node_modules/fast-uri": {
+-      "version": "3.1.8",
+-      "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.8.tgz",
+-      "integrity": "sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==",
++      "version": "3.1.9",
++      "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz",
++      "integrity": "sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==",
+       "funding": [
+         {
+           "type": "github",
+@@ -4143,9 +4133,9 @@
+       }
+     },
+     "node_modules/ajv-formats/node_modules/fast-uri": {
+-      "version": "3.1.8",
+-      "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.8.tgz",
+-      "integrity": "sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==",
++      "version": "3.1.9",
++      "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz",
++      "integrity": "sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==",
+       "funding": [
+         {
+           "type": "github",
+@@ -5522,9 +5512,9 @@
+       }
+     },
+     "node_modules/fast-json-stringify/node_modules/ajv/node_modules/fast-uri": {
+-      "version": "3.1.8",
+-      "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.8.tgz",
+-      "integrity": "sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==",
++      "version": "3.1.9",
++      "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz",
++      "integrity": "sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==",
+       "funding": [
+         {
+           "type": "github",
+@@ -5584,9 +5574,9 @@
+       }
+     },
+     "node_modules/fast-uri": {
+-      "version": "4.2.1",
+-      "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-4.2.1.tgz",
+-      "integrity": "sha512-TmHQgewjHtMq1E5QKA0tOE0yeYGQs25KZC/ziJpubRtWI15W92e6vPFydWOeZBVROSHBYw/QhD9d5OefdD6LDg==",
++      "version": "4.2.3",
++      "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-4.2.3.tgz",
++      "integrity": "sha512-I1PXwP5eAhlNlcdpjt9CgB59op2ZvZfxw+BkqGFVIUOgNpCVTcTqp3HhTX7brxj5vsip+nSY4nTvff+eIA76hg==",
+       "funding": [
+         {
+           "type": "github",
+@@ -5966,11 +5956,12 @@
+       "license": "MIT"
+     },
+     "node_modules/happy-dom": {
+-      "version": "20.14.6",
+-      "resolved": "https://registry.npmjs.org/happy-dom/-/happy-dom-20.14.6.tgz",
+-      "integrity": "sha512-5DDsf4QmEIlRL6NkCv/fxSjYHHkZceL/IaYQdJc2h3G7DRTEai++VTjbfL0LB9geW2VrA3+vrjF3Efx+OTtX0Q==",
++      "version": "21.0.4",
++      "resolved": "https://registry.npmjs.org/happy-dom/-/happy-dom-21.0.4.tgz",
++      "integrity": "sha512-tFm+GaLBgo6o0awHnvHaNoraVo27qJ+2tZEtZ+cIa08hXbeitrxAJajLI05hsUy/2/YTKcUjQYzHe5mCcraLBw==",
+       "dev": true,
+       "license": "MIT",
++      "peer": true,
+       "dependencies": {
+         "@types/node": ">=20.0.0",
+         "@types/whatwg-mimetype": "^3.0.2",
+@@ -8153,10 +8144,11 @@
+       }
+     },
+     "node_modules/undici": {
+-      "version": "8.11.2",
+-      "resolved": "https://registry.npmjs.org/undici/-/undici-8.11.2.tgz",
+-      "integrity": "sha512-u4UB2/IrKdU6lFxumHmmo1a3fCQO5tzQllRorfoRS63txhrB7xTpSn1PftwC4qEHkOaqP95fCWW4lJzwErwzhQ==",
++      "version": "8.12.2",
++      "resolved": "https://registry.npmjs.org/undici/-/undici-8.12.2.tgz",
++      "integrity": "sha512-XtuDWVdqTLr3NAxm2ly9/hU6kUsJOgGh1RASzMBbsw6aWCOaQzHdW+QQDfdERjfJ2V5vL5pRPa4RetO9UfivDg==",
+       "license": "MIT",
++      "peer": true,
+       "engines": {
+         "node": ">=22.19.0"
+       }
+diff --git a/package.json b/package.json
+index 9407536..658e324 100644
+--- a/package.json
++++ b/package.json
+@@ -105,7 +105,7 @@
+     "marked": "^18.1.1",
+     "node-pty": "^1.1.0",
+     "pi-web-typebox": "npm:typebox@1.3.37",
+-    "undici": "^8.11.2",
++    "undici": "8.12.2",
+     "ws": "^8.22.0"
+   },
+   "devDependencies": {
+@@ -120,7 +120,7 @@
+     "dompurify": "^3.4.17",
+     "eslint": "^10.12.0",
+     "globals": "^17.13.0",
+-    "happy-dom": "^20.14.6",
++    "happy-dom": "21.0.4",
+     "knip": "^6.41.0",
+     "mermaid": "^12.2.0",
+     "tsx": "^4.23.15",
+@@ -172,5 +172,10 @@
+       "./extensions"
+     ],
+     "image": "https://raw.githubusercontent.com/jmfederico/pi-web/main/docs/assets/pi-web-banner.png"
++  },
++  "overrides": {
++    "undici": "$undici",
++    "fast-uri@^3.0.0": "3.1.9",
++    "fast-uri@^4.0.0": "4.2.3"
+   }
+ }
+diff --git a/pi-web-plugins/files/FilesViewer.test.ts b/pi-web-plugins/files/FilesViewer.test.ts
+index 9de1f32..feaf6ff 100644
+--- a/pi-web-plugins/files/FilesViewer.test.ts
++++ b/pi-web-plugins/files/FilesViewer.test.ts
+@@ -1,4 +1,5 @@
+ // @vitest-environment happy-dom
++// @vitest-environment-options {"settings":{"enableIframePageLoading":true}}
+ 
+ import { afterEach, describe, expect, it, vi } from "vitest";
+ import { html } from "lit";
+@@ -605,6 +606,7 @@ async function mountViewer(file: FileContentResponse | undefined, patch: ViewerP
+   return viewer;
+ }
+ 
++// Iframe loading is enabled only for these inert about:blank fixture URLs.
+ const inertPreviewUrl: WorkspaceFileViewer["previewUrlBuilder"] = (_projectId, _workspaceId, path, options) => {
+   const params = new URLSearchParams({ path });
+   if (options?.modifiedAt !== undefined) params.set("v", options.modifiedAt);
+diff --git a/src/client/src/formatting/externalMarkdownImages.test.ts b/src/client/src/formatting/externalMarkdownImages.test.ts
+index 9857861..b36cc69 100644
+--- a/src/client/src/formatting/externalMarkdownImages.test.ts
++++ b/src/client/src/formatting/externalMarkdownImages.test.ts
+@@ -82,6 +82,7 @@ describe("external Markdown image dimension hints", () => {
+     const shadow = nativeImage(source);
+     shadowHost.attachShadow({ mode: "open" }).append(shadow);
+     const frame = document.createElement("iframe");
++    frame.srcdoc = "";
+     const custom = document.createElement("pi-web-markdown-image");
+     custom.setAttribute("src", source);
+     const nonHtmlImage = document.createElementNS("http://www.w3.org/2000/svg", "img");

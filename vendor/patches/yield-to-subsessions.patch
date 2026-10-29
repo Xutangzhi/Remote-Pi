@@ -1,0 +1,361 @@
+--- a/src/server/sessions/piSessionService.spawnSubsession.test.ts
++++ b/src/server/sessions/piSessionService.spawnSubsession.test.ts
+@@ -53,6 +53,26 @@
+       return { parent, child, children, service, events };
+     }
+ 
++    it("cancels a waiting join without consuming a later child result", async () => {
++      const { parent, child, service } = subsessionService({ allowed: true, cwd: "/workspace" });
++      try {
++        await service.start("/workspace");
++        await service.spawnSubsession({ spawningCwd: "/workspace", parentSessionId: "parent-1", parentSessionFile: "/tmp/parent-1.jsonl", prompt: "Work" });
++        parent.session.isStreaming = true;
++        child.session.isStreaming = true;
++        child.emit({ type: "agent_start" });
++        const controller = new AbortController();
++        const waiting = service.joinSubsessions("parent-1", "/tmp/parent-1.jsonl", "join", { signal: controller.signal });
++        const rejected = expect(waiting).rejects.toMatchObject({ name: "AbortError" });
++        controller.abort();
++        await rejected;
++        child.session.isStreaming = false;
++        child.emit({ type: "agent_end" });
++        const ready = await service.joinSubsessions("parent-1", "/tmp/parent-1.jsonl");
++        expect(ready.completions).toHaveLength(1);
++      } finally { await service.dispose(); }
++    });
++
+     it("records the parent, delivers the prompt, and lists the tracked child", async () => {
+       const { child, service, events } = subsessionService({ allowed: true, cwd: "/workspace" });
+       await service.start("/workspace"); // bring the parent online so it can be notified
+--- a/src/server/sessions/piSessionService.ts
++++ b/src/server/sessions/piSessionService.ts
+@@ -1227,6 +1227,7 @@
+   private readonly subsessionStoppedParents = new WeakSet<PiAgentSession>();
+   private readonly subsessionDeliveringParents = new WeakSet<PiAgentSession>();
+   private readonly subsessionDeliveryScheduled = new WeakSet<PiAgentSession>();
++  private readonly subsessionJoinWaiters = new Map<string, Set<() => void>>();
+   private readonly deferredGeneratedSessionNames = new WeakMap<PiAgentSession, string>();
+   private readonly compactionPromptQueues = new Map<string, QueuedPrompt[]>();
+   private readonly compactionDrainTimers = new Map<string, NodeJS.Timeout>();
+@@ -1316,7 +1317,7 @@
+       !subsessionsActive ? undefined : {
+         spawn: (input) => this.spawnSubsession(input),
+         list: (parentSessionId, parentSessionFile) => this.listSubsessions(parentSessionId, parentSessionFile),
+-        join: (parentSessionId, parentSessionFile, toolCallId) => this.joinSubsessions(parentSessionId, parentSessionFile, toolCallId),
++        join: (parentSessionId, parentSessionFile, toolCallId, wait) => this.joinSubsessions(parentSessionId, parentSessionFile, toolCallId, wait),
+         prepare: (parentSessionId, parentSessionFile) => this.prepareSubsessionDelivery(parentSessionId, parentSessionFile),
+         check: (parentSessionId, sessionId, parentSessionFile, toolCallId) => this.checkSubsession(parentSessionId, sessionId, parentSessionFile, toolCallId),
+         read: (parentSessionId, sessionId, query, parentSessionFile, toolCallId) => this.readSubsession(parentSessionId, sessionId, query, parentSessionFile, toolCallId),
+@@ -2105,7 +2106,30 @@
+   }
+ 
+   /** Collect ready answers before deciding whether the parent needs to wait. */
+-  async joinSubsessions(parentSessionId: string, parentSessionFile?: string, toolCallId?: string): Promise<SubsessionJoinResult> {
++  async joinSubsessions(parentSessionId: string, parentSessionFile?: string, toolCallId?: string, wait?: { signal?: AbortSignal }): Promise<SubsessionJoinResult> {
++    if (wait !== undefined) {
++      // Register before reading the inbox so a completion during hydration cannot
++      // be missed. Keeping the tool pending prevents Pi from draining follow-ups.
++      for (;;) {
++        wait.signal?.throwIfAborted();
++        let wake = noop;
++        const changed = new Promise<void>((resolve) => { wake = resolve; });
++        const waiters = this.subsessionJoinWaiters.get(parentSessionId) ?? new Set<() => void>();
++        waiters.add(wake);
++        this.subsessionJoinWaiters.set(parentSessionId, waiters);
++        wait.signal?.addEventListener("abort", wake, { once: true });
++        try {
++          const result = await this.joinSubsessions(parentSessionId, parentSessionFile, toolCallId);
++          wait.signal?.throwIfAborted();
++          if (result.completions.length > 0 || !result.subsessions.some(({ status }) => status === "working")) return result;
++          await changed;
++        } finally {
++          wait.signal?.removeEventListener("abort", wake);
++          waiters.delete(wake);
++          if (waiters.size === 0) this.subsessionJoinWaiters.delete(parentSessionId);
++        }
++      }
++    }
+     const subsessions = await this.listSubsessions(parentSessionId, parentSessionFile);
+     this.reconcileSubsessionCompletions(parentSessionId, parentSessionFile);
+     const completions = this.subsessionInbox(parentSessionId, parentSessionFile).pending();
+@@ -2497,6 +2521,7 @@
+     }
+     this.subsessionNotifyArmed.set(childId, false);
+     this.subsessionInbox(link.parentSessionId, link.parentSessionFile).record(completion);
++    for (const wake of this.subsessionJoinWaiters.get(link.parentSessionId) ?? []) wake();
+     void this.wakeParentForSubsession(link.parentSessionId, childId);
+   }
+ 
+--- a/src/server/sessions/spawnSubsessionTool.integration.test.ts
++++ b/src/server/sessions/spawnSubsessionTool.integration.test.ts
+@@ -130,16 +130,6 @@
+ }
+ 
+ describe("yield_to_subsessions Pi agent-loop integration", () => {
+-  it("ends the run after one provider call when invoked alone with a working child", async () => {
+-    const result = await runYieldBatch([
+-      { sessionId: "child-1", cwd: "/workspace", status: "working" },
+-    ]);
+-
+-    expect(result.streamFn).toHaveBeenCalledTimes(1);
+-    expect(result.list).toHaveBeenCalledWith("parent-1", "/sessions/parent-1.jsonl");
+-    expect(result.events.slice(-2).map(({ type }) => type)).toEqual(["turn_end", "agent_end"]);
+-    expect(result.messages.at(-1)).toMatchObject({ role: "toolResult", toolName: "yield_to_subsessions" });
+-  });
+ 
+   it("makes a normal follow-up provider call when no child is working", async () => {
+     const result = await runYieldBatch([]);
+--- a/src/server/sessions/spawnSubsessionTool.test.ts
++++ b/src/server/sessions/spawnSubsessionTool.test.ts
+@@ -113,10 +113,10 @@
+ 
+     expect(yieldTool.parameters).toMatchObject({ type: "object", properties: {} });
+     expect(yieldTool.description).toContain("Ready results are returned and marked read.");
+-    expect(yieldTool.description).toContain("If none are ready but children are working, end this run");
+-    expect(yieldTool.promptSnippet).toBe("yield_to_subsessions: collect unread results or end the run until a result arrives; call alone and last");
++    expect(yieldTool.description).toContain("If none are ready but children are working, wait for the next result");
++    expect(yieldTool.promptSnippet).toBe("yield_to_subsessions: collect unread results or wait until a result arrives; call alone and last");
+     expect(yieldTool.promptGuidelines).toEqual([
+-      "After calling spawn_subsession, continue independent work, then call yield_to_subsessions alone and last at the join point. It returns unread results now or ends the run until a result arrives; do not poll. Receiving a completed result marks it read, so it will not arrive again automatically.",
++      "After calling spawn_subsession, continue independent work, then call yield_to_subsessions alone and last at the join point. It returns unread results now or waits until a result arrives; do not poll. Receiving a completed result marks it read, so it will not arrive again automatically.",
+     ]);
+   });
+ 
+@@ -214,21 +214,19 @@
+     expect(result.terminate).toBeUndefined();
+   });
+ 
+-  it("yield_to_subsessions terminates when tracked children are working", async () => {
+-    const subsessions = [
+-      { sessionId: "child-1", cwd: "/repos/a", status: "working" as const },
+-      { sessionId: "child-2", cwd: "/repos/a", status: "idle" as const },
+-      { sessionId: "child-3", cwd: "/repos/a", status: "working" as const },
+-    ];
+-    const list = vi.fn(() => Promise.resolve(subsessions));
+-    const { yield: yieldTool } = tools({ list });
+-
+-    const result = await yieldTool.execute("call-yield", {}, undefined, undefined, ctxFor("parent-1", "/sessions/parent-1.jsonl"));
+-
+-    expect(list).toHaveBeenCalledWith("parent-1", "/sessions/parent-1.jsonl");
+-    expect(result.details).toEqual({ subsessions, completions: [] });
+-    expect(firstText(result.content)).toBe("Working: child-1, child-3. Ending this run; a new unread result will wake you.");
+-    expect(result.terminate).toBe(true);
++  it("keeps the tool pending until the join returns a child result", async () => {
++    let finish!: (result: Awaited<ReturnType<SubsessionToolDeps["join"]>>) => void;
++    const join = vi.fn<SubsessionToolDeps["join"]>(() => new Promise((resolve) => { finish = resolve; }));
++    const { yield: yieldTool } = tools({ join });
++    const controller = new AbortController();
++    const pending = yieldTool.execute("join", {}, controller.signal, undefined, ctxFor("parent-1", "/sessions/parent-1.jsonl"));
++    let settled = false;
++    void pending.then(() => { settled = true; });
++    await Promise.resolve();
++    expect(settled).toBe(false);
++    expect(join).toHaveBeenCalledWith("parent-1", "/sessions/parent-1.jsonl", "join", { signal: controller.signal });
++    finish({ subsessions: [], completions: [] });
++    expect((await pending).terminate).toBeUndefined();
+   });
+ 
+   it("yield_to_subsessions returns ready results instead of terminating while another child works", async () => {
+@@ -239,7 +237,7 @@
+     }));
+     const { yield: yieldTool } = tools({ join });
+     const result = await yieldTool.execute("ready", {}, undefined, undefined, ctxFor("parent-1", "/sessions/parent-1.jsonl"));
+-    expect(join).toHaveBeenCalledWith("parent-1", "/sessions/parent-1.jsonl", "ready");
++    expect(join).toHaveBeenCalledWith("parent-1", "/sessions/parent-1.jsonl", "ready", {});
+     expect(firstText(result.content)).toContain("Ready answer");
+     expect(firstText(result.content)).toContain("Still working: child-2");
+     expect(result.details).toMatchObject({ completions: [completion] });
+--- a/src/server/sessions/spawnSubsessionTool.ts
++++ b/src/server/sessions/spawnSubsessionTool.ts
+@@ -84,7 +84,7 @@
+ export interface SubsessionToolDeps {
+   spawn(input: SpawnSubsessionInvocation): Promise<SpawnSubsessionResult>;
+   list(parentSessionId: string, parentSessionFile?: string): Promise<SubsessionSummary[]>;
+-  join(parentSessionId: string, parentSessionFile?: string, toolCallId?: string): Promise<SubsessionJoinResult>;
++  join(parentSessionId: string, parentSessionFile?: string, toolCallId?: string, wait?: { signal?: AbortSignal }): Promise<SubsessionJoinResult>;
+   check(parentSessionId: string, sessionId: string, parentSessionFile?: string, toolCallId?: string): Promise<SubsessionCheckResult>;
+   read(parentSessionId: string, sessionId: string, query: SubsessionReadQuery, parentSessionFile?: string, toolCallId?: string): Promise<SubsessionReadResult>;
+ }
+@@ -297,19 +297,19 @@
+ 
+   const yieldTool = defineTool<typeof YieldToSubsessionsParams, SubsessionJoinResult>({
+     name: "yield_to_subsessions",
+-    // Nested tools cannot terminate the outer agent run.
++    // Keep the join explicit rather than hiding a long wait inside nested tools.
+     exposure: "model-only",
+     label: "Yield to subsessions",
+-    description: "Collect unread child results at a join point. Ready results are returned and marked read. If none are ready but children are working, end this run; a new result wakes you. If nothing is outstanding, continue. Call alone and last; do not poll.",
+-    promptSnippet: "yield_to_subsessions: collect unread results or end the run until a result arrives; call alone and last",
++    description: "Collect unread child results at a join point. Ready results are returned and marked read. If none are ready but children are working, wait for the next result without ending the parent task or consuming queued follow-up messages. If nothing is outstanding, continue. Call alone and last; do not poll.",
++    promptSnippet: "yield_to_subsessions: collect unread results or wait until a result arrives; call alone and last",
+     promptGuidelines: [
+-      "After calling spawn_subsession, continue independent work, then call yield_to_subsessions alone and last at the join point. It returns unread results now or ends the run until a result arrives; do not poll. Receiving a completed result marks it read, so it will not arrive again automatically.",
++      "After calling spawn_subsession, continue independent work, then call yield_to_subsessions alone and last at the join point. It returns unread results now or waits until a result arrives; do not poll. Receiving a completed result marks it read, so it will not arrive again automatically.",
+     ],
+     parameters: YieldToSubsessionsParams,
+     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+       const parentSessionId = ctx.sessionManager.getSessionId();
+       const parentSessionFile = ctx.sessionManager.getSessionFile() ?? undefined;
+-      const result = await deps.join(parentSessionId, parentSessionFile, _toolCallId);
++      const result = await deps.join(parentSessionId, parentSessionFile, _toolCallId, _signal === undefined ? {} : { signal: _signal });
+       const workingIds = result.subsessions.filter(({ status }) => status === "working").map(({ sessionId }) => sessionId);
+       if (result.completions.length > 0) {
+         return {
+@@ -317,16 +317,9 @@
+           details: result,
+         };
+       }
+-      if (workingIds.length === 0) {
+-        return {
+-          content: [{ type: "text", text: "No unread child results; no tracked subsessions are working. Continuing." }],
+-          details: result,
+-        };
+-      }
+       return {
+-        content: [{ type: "text", text: `Working: ${workingIds.join(", ")}. Ending this run; a new unread result will wake you.` }],
++        content: [{ type: "text", text: "No unread child results; no tracked subsessions are working. Continuing." }],
+         details: result,
+-        terminate: true,
+       };
+     },
+   });
+--- a/src/server/sessions/subsessionCompletionDelivery.integration.test.ts
++++ b/src/server/sessions/subsessionCompletionDelivery.integration.test.ts
+@@ -13,7 +13,8 @@
+ // Real Pi tool-result, boundary-draft, and settlement semantics. Only the
+ // provider transport and the independently running child's runtime are fake.
+ describe("subsession completion delivery through native Pi", () => {
+-  it.each(["yield-ready", "check-ready", "yield-race", "natural-stop", "nested-check", "check-rejected", "parent-error", "parent-aborted"] as const)("delivers a child result once through %s", async (scenario) => {
++  it.each(["yield-ready", "check-ready", "yield-race", "natural-stop", "nested-check", "check-rejected", "parent-error", "parent-aborted", "yield-queued", "yield-waiting"] as const)("delivers a child result once through %s", async (scenario) => {
++    const waiting = scenario === "yield-queued" || scenario === "yield-waiting";
+     const failed = scenario === "parent-error" || scenario === "parent-aborted";
+     const directory = await mkdtemp(join(tmpdir(), "pi-web-subsession-delivery-"));
+     const modelRuntime = await createTestModelRuntime();
+@@ -24,6 +25,11 @@
+       sessionManager: fakeSessionManager(directory, { getBranch: () => childMessages }),
+     });
+     let completed = false;
++    let joinEntered: () => void = () => undefined;
++    const joinStarted = new Promise<void>((resolve) => { joinEntered = resolve; });
++    let integrationEntered: () => void = () => undefined;
++    const integrationStarted = new Promise<void>((resolve) => { integrationEntered = resolve; });
++    let finishIntegration: () => void = () => undefined;
+     function finishChild() {
+       if (completed) return;
+       completed = true;
+@@ -39,7 +45,6 @@
+       extensionFactories: [
+         (pi) => {
+           pi.on("agent_before_settle", (event) => {
+-            if (scenario === "yield-race") finishChild();
+             if (scenario === "natural-stop" && !boundaryProof) {
+               boundaryProof = true;
+               return { entries: [...event.entries, { type: "custom", customType: "earlier-boundary-proof", data: true }] };
+@@ -59,7 +64,11 @@
+       customTools: [...createSubsessionToolDefinitions(directory, {
+         spawn: (input) => hosted.spawnSubsession(input),
+         list: (...args) => hosted.listSubsessions(...args),
+-        join: (...args) => hosted.joinSubsessions(...args),
++        join: (...args) => {
++          joinEntered();
++          if (scenario === "yield-race") setImmediate(finishChild);
++          return hosted.joinSubsessions(...args);
++        },
+         check: (...args) => hosted.checkSubsession(...args),
+         read: (...args) => hosted.readSubsession(...args),
+       }), defineTool({
+@@ -77,7 +86,8 @@
+     };
+     const runtimes = [parentRuntime, child.runtime];
+     let runtimeIndex = 0;
+-    const hosted = new PiSessionService(new CapturingSessionEventHub(), {
++    const hub = new CapturingSessionEventHub();
++    const hosted = new PiSessionService(hub, {
+       agentDir: directory, modelRuntime, sessionManager: sessionGateway([]), archiveStore: emptyArchiveStore(),
+       createAgentRuntime: () => Promise.resolve(runtimes[runtimeIndex++] ?? child.runtime),
+       spawnTargets: { resolveSpawnTarget: () => Promise.resolve({ allowed: true, cwd: directory }) },
+@@ -89,8 +99,8 @@
+     const modelInputs: string[] = [];
+     session.agent.streamFunction = (_model, context) => {
+       requests += 1;
+-      if (requests > (scenario === "check-rejected" ? 3 : 2)) throw new Error("duplicate child input caused an extra provider request");
+-      if (requests === 1 && scenario !== "yield-race") finishChild();
++      if (requests > (scenario === "check-rejected" || scenario === "yield-queued" ? 3 : 2)) throw new Error("duplicate child input caused an extra provider request");
++      if (requests === 1 && scenario !== "yield-race" && !waiting) finishChild();
+       const inputs = context.messages.filter((message) => message.role === "user" || message.role === "toolResult");
+       modelInputs.push(inputs.map((message) => typeof message.content === "string" ? message.content
+         : message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n")).join("\n"));
+@@ -109,7 +119,20 @@
+       };
+       const stream = createAssistantMessageEventStream();
+       if (stopReason === "error" || stopReason === "aborted") stream.push({ type: "error", reason: stopReason, error: message });
+-      else stream.push({ type: "done", reason: stopReason, message });
++      else if (scenario === "yield-queued" && requests === 1) {
++        void session.followUp("QUEUED_USER_MESSAGE").then(() => {
++          stream.push({ type: "done", reason: stopReason, message });
++          stream.end(message);
++        });
++        return stream;
++      } else if (scenario === "yield-waiting" && requests === 2) {
++        finishIntegration = () => {
++          stream.push({ type: "done", reason: stopReason, message });
++          stream.end(message);
++        };
++        integrationEntered();
++        return stream;
++      } else stream.push({ type: "done", reason: stopReason, message });
+       stream.end(message);
+       return stream;
+     };
+@@ -119,11 +142,40 @@
+       await hosted.spawnSubsession({ spawningCwd: directory, parentSessionId: session.sessionId, parentSessionFile: undefined, prompt: "Work" });
+       child.session.isStreaming = true;
+       child.emit({ type: "agent_start" });
+-      await session.prompt("Continue independent work, then join");
++      if (waiting) {
++        const running = session.prompt("Continue independent work, then join");
++        await joinStarted;
++        // A yielding run must stay parked, with the next user message still queued.
++        await new Promise<void>((resolve) => setImmediate(resolve));
++        expect(requests).toBe(1);
++        expect(session.getFollowUpMessages()).toEqual(scenario === "yield-queued" ? ["QUEUED_USER_MESSAGE"] : []);
++        expect(session.isStreaming).toBe(true);
++        expect((await hosted.status({ id: session.sessionId, cwd: directory })).isStreaming).toBe(true);
++        expect((await hosted.unreadCatalog()).sessions).toEqual([]);
++        expect(hub.sessionEvents.filter(({ sessionId, event }) => sessionId === session.sessionId && event.type === "agent.end")).toEqual([]);
++        finishChild();
++        if (scenario === "yield-waiting") {
++          await integrationStarted;
++          // The tool has returned, but integrating its result is still parent work.
++          expect((await hosted.status({ id: session.sessionId, cwd: directory })).isStreaming).toBe(true);
++          expect((await hosted.unreadCatalog()).sessions).toEqual([]);
++          expect(hub.sessionEvents.filter(({ sessionId, event }) => sessionId === session.sessionId && event.type === "agent.end")).toEqual([]);
++          finishIntegration();
++        }
++        await running;
++        expect((await hosted.status({ id: session.sessionId, cwd: directory })).isStreaming).toBe(false);
++        expect((await hosted.unreadCatalog()).sessions).toEqual([expect.objectContaining({ sessionId: session.sessionId })]);
++        expect(modelInputs[1]).toContain("CHILD_FINAL_ANSWER");
++        expect(modelInputs[1]).not.toContain("QUEUED_USER_MESSAGE");
++        if (scenario === "yield-queued") expect(modelInputs[2]).toContain("QUEUED_USER_MESSAGE");
++        expect(session.getFollowUpMessages()).toEqual([]);
++      } else {
++        await session.prompt("Continue independent work, then join");
++      }
+       await new Promise<void>((resolve) => setImmediate(resolve));
+       const joined = await hosted.joinSubsessions(session.sessionId);
+       expect(joined.completions).toHaveLength(failed ? 1 : 0);
+-      expect(requests).toBe(failed ? 1 : scenario === "check-rejected" ? 3 : 2);
++      expect(requests).toBe(failed ? 1 : scenario === "check-rejected" || scenario === "yield-queued" ? 3 : 2);
+       if (!failed) {
+         expect(modelInputs.at(-1)?.split("CHILD_FINAL_ANSWER")).toHaveLength(2);
+         expect(session.messages.at(-1)).toMatchObject({ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Integrated the child result" }] });
+@@ -134,7 +186,7 @@
+       if (scenario === "natural-stop") expect(session.sessionManager.getBranch().some((entry) => entry.type === "custom" && entry.customType === "earlier-boundary-proof")).toBe(true);
+       expect(sendMessage).not.toHaveBeenCalled(); // No rendered answer was enqueued separately.
+       const notices = session.messages.filter((message) => message.role === "custom" && message.customType === "subsession.completion");
+-      expect(notices).toHaveLength(scenario === "yield-race" || scenario === "natural-stop" || scenario === "check-rejected" ? 1 : 0);
++      expect(notices).toHaveLength(scenario === "natural-stop" || scenario === "check-rejected" ? 1 : 0);
+       expect(await hosted.prepareSubsessionDelivery(session.sessionId)).toBeUndefined();
+       expect(errors).toEqual([]);
+     } finally {

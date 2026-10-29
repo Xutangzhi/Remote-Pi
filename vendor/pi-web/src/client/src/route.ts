@@ -1,0 +1,108 @@
+import type { QualifiedContributionId } from "./plugins/types";
+import { normalizeContributionQueryRecord, replaceContributionQueryParams, type ContributionQuerySnapshot } from "./namespacedQueryArgs";
+
+export type MainView = "navigation" | "chat" | "workspace";
+
+export function parseMainView(value: unknown): MainView | undefined {
+  return value === "navigation" || value === "chat" || value === "workspace" ? value : undefined;
+}
+
+interface AppRouteLocation {
+  machineId: string | undefined;
+  projectId: string | undefined;
+  workspaceId: string | undefined;
+  sessionId: string | undefined;
+}
+
+export interface WorkspaceRouteIdentity {
+  machineId: string;
+  projectId: string;
+  workspaceId: string;
+}
+
+/** Route values after host-owned source/runtime panel identities are resolved. */
+export interface AppRoute extends AppRouteLocation {
+  tool: QualifiedContributionId | undefined;
+  view: MainView | undefined;
+}
+
+/** Raw URL values are retained so invalid destinations can be explained without rewriting them. */
+export interface ParsedAppRoute extends AppRouteLocation {
+  tool: string | undefined;
+  view: string | undefined;
+}
+
+export type WorkspacePanelRouteResolver = (value: string) => QualifiedContributionId | undefined;
+
+/** Browser-owned creation identity, never a backend session ID or a create command. */
+export function isCreatingSessionId(sessionId: string | undefined): sessionId is `creating:${string}` {
+  return sessionId?.startsWith("creating:") === true;
+}
+
+export function readRoute(): ParsedAppRoute {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    machineId: nonEmpty(params.get("machine")),
+    projectId: nonEmpty(params.get("project")),
+    workspaceId: nonEmpty(params.get("workspace")),
+    sessionId: nonEmpty(params.get("session")),
+    tool: nonEmpty(params.get("tool")),
+    view: nonEmpty(params.get("view")),
+  };
+}
+
+export function resolveAppRoute(route: ParsedAppRoute, resolveWorkspacePanel: WorkspacePanelRouteResolver): AppRoute {
+  return {
+    machineId: route.machineId,
+    projectId: route.projectId,
+    workspaceId: route.workspaceId,
+    sessionId: route.sessionId,
+    tool: route.tool === undefined ? undefined : resolveWorkspacePanelRouteValue(route.tool, resolveWorkspacePanel),
+    view: parseMainView(route.view),
+  };
+}
+
+export function resolveWorkspacePanelRouteValue(value: string, resolveWorkspacePanel: WorkspacePanelRouteResolver): QualifiedContributionId | undefined {
+  return resolveWorkspacePanel(value) ?? (isQualifiedContributionId(value) ? value : undefined);
+}
+
+export function routeMatchesWorkspaceIdentity(
+  route: Pick<ParsedAppRoute, "machineId" | "projectId" | "workspaceId">,
+  identity: WorkspaceRouteIdentity,
+): boolean {
+  return (route.machineId ?? "local") === identity.machineId
+    && route.projectId === identity.projectId
+    && route.workspaceId === identity.workspaceId;
+}
+
+export function writeRoute(route: ParsedAppRoute, options?: { replace?: boolean | undefined; contributionQuery?: ContributionQuerySnapshot }): void {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("machine");
+  url.searchParams.delete("project");
+  url.searchParams.delete("workspace");
+  url.searchParams.delete("session");
+  url.searchParams.delete("tool");
+  url.searchParams.delete("view");
+  if (route.machineId !== undefined && route.machineId !== "" && route.machineId !== "local") url.searchParams.set("machine", route.machineId);
+  if (route.projectId !== undefined && route.projectId !== "") url.searchParams.set("project", route.projectId);
+  if (route.workspaceId !== undefined && route.workspaceId !== "") url.searchParams.set("workspace", route.workspaceId);
+  if (route.sessionId !== undefined && route.sessionId !== "") url.searchParams.set("session", route.sessionId);
+  if (route.tool !== undefined && route.tool !== "") url.searchParams.set("tool", route.tool);
+  if (route.view !== undefined && route.view !== "") url.searchParams.set("view", route.view);
+  if (options?.contributionQuery !== undefined) {
+    replaceContributionQueryParams(url.searchParams, normalizeContributionQueryRecord(options.contributionQuery));
+  }
+  const next = `${url.pathname}${url.search}${url.hash}`;
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (next === current) return;
+  if (options?.replace === true) window.history.replaceState({}, "", url);
+  else window.history.pushState({}, "", url);
+}
+
+function nonEmpty(value: string | null): string | undefined {
+  return value === null || value === "" ? undefined : value;
+}
+
+function isQualifiedContributionId(value: string): value is QualifiedContributionId {
+  return /^[a-z][a-z0-9.-]*:[a-z][a-z0-9.-]*$/u.test(value);
+}

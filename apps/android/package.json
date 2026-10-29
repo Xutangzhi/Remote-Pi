@@ -1,0 +1,44 @@
+{
+  "name": "remote-pi-android",
+  "version": "0.2.4",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "sync": "npm run build && cap sync android",
+    "android:build": "npm run sync && node scripts/android-build.mjs",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:ui": "npm run build && playwright test",
+    "test:native": "npm run sync && node --import tsx scripts/native-test.mjs",
+    "test:device": "npm run sync && node --import tsx scripts/device-test.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.3",
+    "@capacitor/app": "^8.0.0",
+    "@capacitor/core": "8.5.3",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "@remote-pi/core": "0.0.0",
+    "@remote-pi/ui": "0.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.0",
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/ssh2": "^1.15.6",
+    "@types/ws": "^8.18.2",
+    "ssh2": "^1.17.0",
+    "tsx": "^4.20.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.4",
+    "ws": "^8.22.0"
+  }
+}

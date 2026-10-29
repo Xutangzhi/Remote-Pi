@@ -1,0 +1,176 @@
+{
+  "name": "@jmfederico/pi-web",
+  "version": "1.202610.3",
+  "description": "Web UI for persistent Pi Coding Agent sessions in real workspaces.",
+  "license": "MIT",
+  "author": "Federico Jaramillo Martinez",
+  "type": "module",
+  "exports": {
+    "./plugin-api": {
+      "types": "./dist/plugin-api.d.ts"
+    },
+    "./server-plugin-api": {
+      "types": "./dist/server-plugin-api.d.ts",
+      "import": "./dist/server-plugin-api.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "plugin-api": [
+        "dist/plugin-api.d.ts"
+      ],
+      "server-plugin-api": [
+        "dist/server-plugin-api.d.ts"
+      ]
+    }
+  },
+  "bin": {
+    "pi-web": "dist/cli.js",
+    "pi-web-server": "dist/server/index.js",
+    "pi-web-sessiond": "dist/server/sessiond.js"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.testSupport.*",
+    "install.sh",
+    "README.md",
+    "LICENSE",
+    "extensions",
+    "examples/workspace-provider-plugin",
+    "examples/session-bridge-plugin",
+    "!examples/**/node_modules",
+    "!examples/**/dist",
+    "docs/plugins.md",
+    "docs/config.md",
+    "docs/assets",
+    "plugin-api.d.ts",
+    "server-plugin-api.d.ts"
+  ],
+  "scripts": {
+    "dev": "bash -c 'trap \"kill 0\" EXIT; npm run dev:sessiond & npm run dev:web & npm run dev:client & wait'",
+    "dev:sessiond": "node scripts/dev-sessiond.mjs --watch",
+    "dev:web": "tsc -p tsconfig.plugins.json && node scripts/dev-web.mjs",
+    "dev:server": "npm run dev:web",
+    "dev:client": "vite --host 0.0.0.0",
+    "dev:plugins": "node scripts/build-plugins.mjs --watch",
+    "build": "npm run clean && tsc -p tsconfig.build.json && npm run build:plugin-api && npm run build:plugins && vite build",
+    "build:plugin-api": "tsc -p tsconfig.plugin-api.json",
+    "build:plugins": "tsc -p tsconfig.plugins.json && node scripts/build-plugins.mjs",
+    "capture:screenshots": "node scripts/capture-screenshots.mjs",
+    "typecheck": "tsc --noEmit",
+    "typecheck:cached": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/pi-web/typecheck.tsbuildinfo",
+    "knip": "knip",
+    "lint": "eslint \"src/**/*.ts\" \"extensions/**/*.ts\" \"pi-web-plugins/**/*.ts\" \"pi-packages/**/*.ts\" vite.config.ts vitest.config.ts vitest.artifacts.config.ts",
+    "test": "vitest run --config vitest.config.ts",
+    "check:artifacts": "vitest run --config vitest.artifacts.config.ts",
+    "verify": "npm run typecheck && npm run lint && npm run knip && npm test",
+    "start": "tsx src/server/index.ts",
+    "start:sessiond": "node scripts/dev-sessiond.mjs",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "prepack": "npm run build",
+    "pack:dry": "npm pack --dry-run",
+    "smoke:package-install": "node scripts/smoke-package-install.mjs",
+    "prepublishOnly": "npm run verify",
+    "publish:npm": "npm publish --access public",
+    "prepare": "node scripts/install-git-hooks.mjs",
+    "changeset": "changeset",
+    "release:version": "changeset version",
+    "changelog:status": "changeset status"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-css": "^6.3.1",
+    "@codemirror/lang-go": "^6.0.1",
+    "@codemirror/lang-html": "^6.4.12",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/lang-python": "^6.2.1",
+    "@codemirror/lang-rust": "^6.0.2",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/legacy-modes": "^6.5.5",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "6.43.13",
+    "@fastify/compress": "^9.2.2",
+    "@fastify/static": "^10.1.6",
+    "@fastify/websocket": "^11.3.4",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "css-tree": "^3.2.1",
+    "diff": "^9.0.0",
+    "fastify": "^5.12.7",
+    "highlight.js": "^11.12.0",
+    "image-size": "^2.0.4",
+    "lit": "^3.3.3",
+    "marked": "^18.1.1",
+    "node-pty": "^1.1.0",
+    "pi-web-typebox": "npm:typebox@1.3.37",
+    "undici": "^8.11.2",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^3.0.3",
+    "@earendil-works/pi-agent-core": "^1.2.0",
+    "@earendil-works/pi-ai": "^1.2.0",
+    "@earendil-works/pi-coding-agent": "^1.2.0",
+    "@eslint/js": "^10.0.1",
+    "@types/css-tree": "^3.2.0",
+    "@types/node": "^26.6.5",
+    "@types/ws": "^8.18.2",
+    "dompurify": "^3.4.17",
+    "eslint": "^10.12.0",
+    "globals": "^17.13.0",
+    "happy-dom": "^20.14.6",
+    "knip": "^6.41.0",
+    "mermaid": "^12.2.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.4"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jmfederico/pi-web.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jmfederico/pi-web/issues"
+  },
+  "homepage": "https://pi-web.dev/",
+  "packageManager": "npm@11.11.0",
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "^1.0.0",
+    "@earendil-works/pi-ai": "^1.0.0",
+    "@earendil-works/pi-coding-agent": "^1.0.0"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-web",
+    "pi-web-ui",
+    "pi-webui",
+    "pi-coding-agent",
+    "pi-coding-agent-web-ui",
+    "coding-agent",
+    "ai-coding-agent",
+    "agentic-development",
+    "developer-tools",
+    "web-ui",
+    "webui",
+    "browser-ui",
+    "remote-development",
+    "persistent-sessions"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ],
+    "image": "https://raw.githubusercontent.com/jmfederico/pi-web/main/docs/assets/pi-web-banner.png"
+  }
+}
