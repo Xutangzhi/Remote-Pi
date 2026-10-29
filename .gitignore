@@ -1,12 +1,47 @@
+# Dependencies and client build output
 node_modules/
 dist/
 release/
+*.tsbuildinfo
+
+# Tool caches, test reports, and local working files
+.cache/
+.npm/
+.vite/
+.vitest/
+.nyc_output/
+coverage/
 test-results/
 playwright-report/
-.DS_Store
+blob-report/
+.playwright-cli/
 work/
 __pycache__/
-*.pyc
+*.py[co]
+
+# Logs and profiling output
+*.log
+*.heapsnapshot
+*.cpuprofile
+*.hprof
+
+# OS metadata and editor temporary files
+.DS_Store
+._*
+*.swp
+*.swo
+*~
+
+# Installers and package archives; keep source assets and Gradle wrapper JARs
+*.apk
+*.aab
+*.dmg
+*.blockmap
+*.AppImage
+*.app/
+/*.tgz
+/apps/*/*.tgz
+/vendor/pi-web/*.tgz
 
 # Local Android SDK / IDE state and build output
 .gradle/
