@@ -3,7 +3,7 @@ import { createServer as createHTTPServer } from 'node:http';
 import { connect as connectTCP, type Socket } from 'node:net';
 import ssh2, { type Connection } from 'ssh2';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { CatalogEvent, MachineStatusSnapshot, Project, SessionInfo, SessionEvent, SessionStatus, SlashCommand, UnreadCatalog, WireMessage } from '../src/shared/pi';
+import type { AskRequest, CatalogEvent, MachineStatusSnapshot, Project, SessionInfo, SessionEvent, SessionStatus, SlashCommand, UnreadCatalog, WireMessage } from '../src/shared/pi';
 
 export const TEST_PASSWORD = 'local-test-only-password';
 const privateKey = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' });
@@ -36,9 +36,12 @@ export async function startFixture({ binaryFrames = false } = {}) {
   const statuses = new Map<string, SessionStatus>(); const sequences = new Map<string, number>();
   const snapshotDelay = new Map<string, number>();
   const completionDelay = new Map<string, number>();
+  const previewFiles = new Map<string, Buffer>();
+  const fileContents = new Map<string, string>();
   const fileReadDelay = new Map<string, number>(); const fileReadErrors = new Set<string>();
   let terminalReadyDelay = 0;
   const promptResponseDelay = new Map<string, number>();
+  const askSubmitFailures = new Map<string, string>();
   const commandResults = new Map<string, import('../src/shared/pi').CommandResult>();
   const commands: SlashCommand[] = [
     { name: 'session', source: 'builtin', description: 'Session stats' }, { name: 'fork', source: 'builtin' }, { name: 'clone', source: 'builtin' }, { name: 'tree', source: 'builtin' }, { name: 'reload', source: 'builtin' },
@@ -114,9 +117,14 @@ export async function startFixture({ binaryFrames = false } = {}) {
           : entries.filter((file) => (file.kind !== 'untracked' || url.searchParams.get('scope') === 'all') && file.path.toLowerCase().includes(query.toLowerCase()));
         later(() => json(response, files), completionDelay.get(query) || 0);
       }
+      else if (scope[3] === 'file/preview') {
+        const data = previewFiles.get(url.searchParams.get('path') || '');
+        if (!data || url.searchParams.get('download') !== '1') json(response, { error: 'No preview file' }, 404);
+        else { response.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': data.length }); response.end(data); }
+      }
       else if (scope[3] === 'file') {
         const filePath = url.searchParams.get('path') || ''; const fail = fileReadErrors.has(filePath);
-        later(() => fail ? json(response, { error: 'Delayed file read failed' }, 500) : json(response, { path: filePath, content: '# Remote Pi\n\nA native desktop workspace.\n', binary: false, truncated: false }), fileReadDelay.get(filePath) || 0);
+        later(() => fail ? json(response, { error: 'Delayed file read failed' }, 500) : json(response, { path: filePath, content: fileContents.get(filePath) ?? '# Remote Pi\n\nA native desktop workspace.\n', binary: false, truncated: false }), fileReadDelay.get(filePath) || 0);
       }
       else json(response, { error: 'No route' }, 404); return;
     }
@@ -183,7 +191,20 @@ export async function startFixture({ binaryFrames = false } = {}) {
         later(() => emit(id, { type: 'assistant.delta', streamId: turn, text: '这是通过真实 SSH 隧道传输的测试流式回复。' }), 180);
         later(() => { const assistant = { role: 'assistant', entryId: `${turn}-a`, streamId: turn, content: '已收到。这是通过真实 SSH 隧道传输的测试流式回复。' }; history.push(assistant); emit(id, { type: 'message.end', message: assistant }); finishWork(id); }, 300);
       }
-      else if (endpoint.startsWith('dialogs/') || endpoint.startsWith('ask/')) { status(id).pendingDialogs = []; emit(id, { type: 'dialog.closed', dialogId: body.dialogId }); json(response, { result: 'closed', sessionStatus: status(id) }); }
+      else if (endpoint === 'ask/submit') {
+        if (askSubmitFailures.has(id)) { const error = askSubmitFailures.get(id); askSubmitFailures.delete(id); json(response, { error }, 400); return; }
+        try {
+          const ask = histories.get(id)?.find((message) => message.toolName === 'ask_user' && (message.details?.ask as AskRequest | undefined)?.askId === body.askId)?.details?.ask as AskRequest | undefined;
+          if (!ask) throw Error('Unknown ask ID');
+          for (const question of ask.questions) {
+            const answer = body.answers.find((answer: { id: string }) => answer.id === question.id);
+            // Pi Web counts a custom answer as another choice, even for radio questions.
+            if (question.multiple !== true && (answer?.values.length || 0) + (answer?.otherText?.trim() ? 1 : 0) > 1) throw Error(`Question ${question.id} accepts a single answer`);
+          }
+          json(response, { result: 'closed', sessionStatus: status(id) });
+        } catch (error) { json(response, { error: (error as Error).message }, 400); }
+      }
+      else if (endpoint.startsWith('dialogs/') || endpoint === 'ask/cancel') { status(id).pendingDialogs = []; emit(id, { type: 'dialog.closed', dialogId: body.dialogId }); json(response, { result: 'closed', sessionStatus: status(id) }); }
       else json(response, { error: `Unknown endpoint ${endpoint}` }, 404);
       return;
     }
@@ -228,7 +249,7 @@ export async function startFixture({ binaryFrames = false } = {}) {
     });
   });
   await new Promise<void>((resolve) => ssh.listen(0, '127.0.0.1', resolve));
-  return { sshPort: (ssh.address() as { port: number }).port, webPort, calls, sessions, snapshotDelay, completionDelay, fileReadDelay, fileReadErrors, promptResponseDelay, commandResults, commands, histories, emit, startWork, finishWork, ackDelay, catalogDelay,
+  return { sshPort: (ssh.address() as { port: number }).port, webPort, calls, sessions, snapshotDelay, completionDelay, previewFiles, fileContents, fileReadDelay, fileReadErrors, promptResponseDelay, askSubmitFailures, commandResults, commands, histories, emit, startWork, finishWork, ackDelay, catalogDelay,
     delayTerminalReady(ms: number) { terminalReadyDelay = ms; },
     get environmentRuns() { return environmentRuns; },
     failEnvironmentRefresh(fail: boolean) { failEnvironmentRefresh = fail; },

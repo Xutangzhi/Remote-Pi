@@ -1,6 +1,6 @@
 {
   "name": "remote-pi",
-  "version": "0.2.25",
+  "version": "0.2.26",
   "private": true,
   "description": "A desktop home for your remote Pi workspaces",
   "author": "Remote Pi",

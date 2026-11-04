@@ -20,6 +20,8 @@ export interface ConnectionState {
 export interface AuthChallenge { id: string; prompt: string; kind: 'host' | 'secret'; }
 export interface AppSettings { profiles: ServerProfile[]; theme: Theme; }
 export interface AppBridge {
+  prepareFilePreview(input: { id: string; projectId: string; workspaceId: string; path: string }): Promise<string>;
+  releaseFilePreview(id: string): Promise<void>;
   getSettings(): Promise<AppSettings>;
   saveProfile(profile: ServerProfile): Promise<ServerProfile>;
   deleteProfile(id: string): Promise<void>;

@@ -1,4 +1,5 @@
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { createServer as createHTTPServer } from 'node:http';
 import { connect as connectTCP, type Socket } from 'node:net';
 import ssh2, { type Connection } from 'ssh2';
@@ -17,6 +18,8 @@ const privateKey = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKe
 export const fixtureHTML = '<!doctype html><html><title>Pi Web test fixture</title><pi-web-app>Original Pi Web fixture</pi-web-app></html>';
 const prefix = '/api/machines/local';
 export async function startFixture() {
+  const previewFiles = new Map([['preview.csv', Buffer.from('名称,编号\n中文预览,001')], ['preview.wav', await readFile(new URL('../../desktop/tests/assets/preview.wav', import.meta.url))], ['preview.webm', await readFile(new URL('../../desktop/tests/assets/preview.webm', import.meta.url))]]);
+  for (const path of ['preview.pdf', 'preview.docx', 'preview.pptx']) previewFiles.set(path, await readFile(new URL(`../../desktop/tests/assets/${path}`, import.meta.url)));
   const sockets = new Set<Socket>(); const clients = new Set<Connection>();
   const channels = new Map<WebSocket, string>(); const wss = new WebSocketServer({ noServer: true });
   const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -94,7 +97,12 @@ export async function startFixture() {
       if (!project) { json(response, { error: 'No project' }, 404); return; }
       if (!scope[2]) json(response, { status: 'ready', workspaces: [{ id: `workspace-${project.id}`, projectId: project.id, path: project.path, label: 'main', isMain: true }] });
       else if (scope[3] === 'trust') json(response, { trusted: body.trusted });
-      else if (scope[3] === 'tree') json(response, { path: '', entries: [{ name: 'src', path: 'src', type: 'directory' }, { name: 'README.md', path: 'README.md', type: 'file' }], truncated: false });
+      else if (scope[3] === 'tree') json(response, { path: '', entries: [{ name: 'src', path: 'src', type: 'directory' }, { name: 'README.md', path: 'README.md', type: 'file' }, ...[...previewFiles.keys()].map((path) => ({ name: path, path, type: 'file' }))], truncated: false });
+      else if (scope[3] === 'file/preview') {
+        const data = previewFiles.get(url.searchParams.get('path') || '');
+        if (!data || url.searchParams.get('download') !== '1') json(response, { error: 'No preview file' }, 404);
+        else { response.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': data.length }); response.end(data); }
+      }
       else if (scope[3] === 'file') json(response, { path: url.searchParams.get('path'), content: '# Remote Pi\n\nA native desktop workspace.\n', binary: false, truncated: false });
       else json(response, { error: 'No route' }, 404); return;
     }

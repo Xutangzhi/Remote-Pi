@@ -12,6 +12,7 @@ test('complete desktop flow: saved profile, in-app host/password auth, native pr
   const desktop = await electron.launch({ args: ['.'], env });
   try {
     const page = await desktop.firstWindow();
+    await expect(page.locator('.sidebar-footnote')).toContainText(`v${JSON.parse(await readFile('package.json', 'utf8')).version}`);
     await expect(page.getByRole('heading', { name: /你的远端工作台/ })).toBeVisible();
     await page.getByLabel('连接名称', { exact: true }).fill('Integration server');
     await page.getByLabel('服务器地址', { exact: true }).fill('127.0.0.1');

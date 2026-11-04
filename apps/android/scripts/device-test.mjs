@@ -21,7 +21,7 @@ try {
   if (!/^\d+$/.test(port)) throw Error('ADB did not allocate a reverse port');
   const output = await run(adb, ['shell', 'am', 'instrument', '-w', '-e', 'notClass', 'dev.remotepi.android.RealServerTest', '-e', 'sshPort', port, '-e', 'webPort', String(fixture.webPort), '-e', 'password', TEST_PASSWORD, '-e', 'privateKey', Buffer.from(TEST_PRIVATE_KEY).toString('base64'), '-e', 'passphrase', TEST_KEY_PASSPHRASE, 'dev.remotepi.android.test/androidx.test.runner.AndroidJUnitRunner'], true);
   console.log(output);
-  if (!output.includes('OK (6 tests)')) throw Error('Android device tests did not all pass. The full suite requires a test device running Android 11 or newer.');
+  if (!output.includes('OK (7 tests)')) throw Error('Android device tests did not all pass. The full suite requires a test device running Android 11 or newer.');
 } finally {
   if (port) await run(adb, ['reverse', '--remove', `tcp:${port}`]).catch(() => {});
   await fixture.close();

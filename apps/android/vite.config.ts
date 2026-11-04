@@ -1,2 +1,3 @@
 import { defineConfig } from 'vite';
-export default defineConfig({ build: { outDir: 'dist', target: 'chrome109' } });
+import { pdfAssets } from '../../packages/ui/pdf-assets';
+export default defineConfig({ plugins: [pdfAssets()], build: { outDir: 'dist', target: 'chrome109' } });

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startFixture, TEST_PASSWORD } from '../fixtures';
-import type { WireMessage } from '../../src/shared/pi';
+import type { AskRequest, WireMessage } from '../../src/shared/pi';
 
 async function connectedFixture(messages: WireMessage[]) {
   const fixture = await startFixture();
@@ -75,5 +75,83 @@ test('a replaced attachment never keeps the previous image when its new media fa
     fixture.emit('session-1', { type: 'message.end', message: message({ mimeType: 'image/png', data: 'aW52YWxpZA==' }) });
     await expect(page.getByTestId('message-user')).toContainText('图片加载失败');
     await expect(image).toHaveCount(0);
+  } finally { await close(); }
+});
+
+const translationQuestion = {
+  id: 'translation_type', question: '请选择翻译方式',
+  options: [{ value: 'literal', label: '直译' }, { value: 'natural', label: '意译' }],
+};
+const askMessage = (questions: AskRequest['questions'] = [translationQuestion]): WireMessage => ({
+  entryId: 'ask-result', role: 'toolResult', toolName: 'ask_user', toolCallId: 'ask-tool', content: '等待回答', isError: false,
+  details: { ask: { askId: 'translation-ask', askedAt: new Date().toISOString(), questions } },
+});
+
+test('single answers can be deselected and custom text replaces the selected option', async () => {
+  const { fixture, page, close } = await connectedFixture([askMessage()]);
+  try {
+    const form = page.locator('form.ask-form');
+    const literal = form.getByRole('radio', { name: '直译', exact: true });
+    await literal.click();
+    await expect(literal).toBeChecked();
+    await literal.click();
+    await expect(literal).not.toBeChecked();
+    await expect(form.getByRole('button', { name: '提交回答' })).toBeDisabled();
+    await literal.click();
+    await form.getByRole('textbox').fill('  保留专业术语  ');
+    await expect(literal).not.toBeChecked();
+    await form.getByRole('button', { name: '提交回答' }).click();
+    await expect(page.locator('.ask-form')).toHaveText('回答已提交');
+    const call = fixture.calls.find((call) => call.path.endsWith('/ask/submit'))!;
+    expect(call.body.answers).toEqual([{ id: 'translation_type', values: [], otherText: '保留专业术语' }]);
+  } finally { await close(); }
+});
+
+test('single choices replace custom text while multiple choices can include a custom answer', async () => {
+  const { fixture, page, close } = await connectedFixture([askMessage([
+    translationQuestion,
+    { id: 'targets', question: '目标格式', multiple: true, options: [{ value: 'md', label: 'Markdown' }, { value: 'pdf', label: 'PDF' }] },
+    { id: 'note', question: '其他要求', options: [] },
+  ])]);
+  try {
+    const form = page.locator('form.ask-form');
+    const single = form.getByRole('group', { name: '请选择翻译方式', exact: true });
+    await single.getByRole('textbox').fill('原本的自定义回答');
+    await single.getByRole('radio', { name: '意译', exact: true }).click();
+    await expect(single.getByRole('textbox')).toHaveValue('');
+    const multiple = form.getByRole('group', { name: '目标格式', exact: true });
+    await multiple.getByRole('checkbox', { name: 'Markdown', exact: true }).check();
+    await multiple.getByRole('checkbox', { name: 'PDF', exact: true }).check();
+    await multiple.getByRole('checkbox', { name: 'PDF', exact: true }).uncheck();
+    await multiple.getByRole('textbox').fill('  同时提供 HTML  ');
+    await expect(multiple.getByRole('checkbox', { name: 'Markdown', exact: true })).toBeChecked();
+    await form.getByRole('group', { name: '其他要求', exact: true }).getByRole('textbox').fill('保留引用');
+    await form.getByRole('button', { name: '提交回答' }).click();
+    await expect(page.locator('.ask-form')).toHaveText('回答已提交');
+    expect(fixture.calls.find((call) => call.path.endsWith('/ask/submit'))!.body.answers).toEqual([
+      { id: 'translation_type', values: ['natural'] },
+      { id: 'targets', values: ['md'], otherText: '同时提供 HTML' },
+      { id: 'note', values: [], otherText: '保留引用' },
+    ]);
+  } finally { await close(); }
+});
+
+test('a failed answer remains editable and the question can still be cancelled', async () => {
+  const { fixture, page, close } = await connectedFixture([askMessage()]);
+  try {
+    fixture.askSubmitFailures.set('session-1', 'Question translation_type accepts a single answer');
+    const form = page.locator('form.ask-form');
+    const literal = form.getByRole('radio', { name: '直译', exact: true });
+    await literal.click();
+    await form.getByRole('button', { name: '提交回答' }).click();
+    await expect(page.getByText(/Question translation_type accepts a single answer/)).toBeVisible();
+    await expect(literal).toBeEnabled();
+    await expect(literal).toBeChecked();
+    await literal.click();
+    await expect(literal).not.toBeChecked();
+    await form.getByRole('button', { name: '取消', exact: true }).click();
+    await expect(page.locator('.ask-form')).toHaveText('已取消回答');
+    expect(fixture.calls.find((call) => call.path.endsWith('/ask/cancel'))!.body).toEqual({ cwd: '/srv/projects/remote-pi', askId: 'translation-ask' });
+    expect(fixture.calls.filter((call) => call.path.endsWith('/ask/submit'))).toHaveLength(1);
   } finally { await close(); }
 });

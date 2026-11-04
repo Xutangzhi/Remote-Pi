@@ -11,13 +11,19 @@
     "./useSessionIndicators": "./src/useSessionIndicators.ts",
     "./api": "./src/api.ts",
     "./styles.css": "./src/styles.css",
-    "./tokens.css": "./src/tokens.css"
+    "./tokens.css": "./src/tokens.css",
+    "./FilePreview": "./src/FilePreview.tsx"
   },
   "dependencies": {
+    "@office-kit/pptx": "0.28.0",
+    "@office-kit/pptx-preview": "0.21.0",
     "@remote-pi/core": "0.0.0",
+    "docx-preview": "0.4.1",
     "lucide-react": "^0.468.0",
+    "pdfjs-dist": "5.4.624",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "peerDependencies": {
     "react": "^19.3.1"

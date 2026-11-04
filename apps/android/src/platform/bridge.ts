@@ -1,3 +1,5 @@
+import { Capacitor } from '@capacitor/core';
+import { filePreviewFormat } from '@remote-pi/core/file-preview';
 import { App as CapacitorApp } from '@capacitor/app';
 import { native } from './native';
 import { NativeSocket } from './native-socket';
@@ -21,6 +23,14 @@ export async function createAndroidBridge(): Promise<DesktopBridge> {
     if (!handled) void CapacitorApp.minimizeApp();
   });
   return {
+    prepareFilePreview: async ({ id, projectId, workspaceId, path }) => {
+      const format = filePreviewFormat(path);
+      if (!format) throw new Error('暂不支持此文件格式的预览。');
+      const endpoint = `/api/machines/local/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/file/preview?${new URLSearchParams({ path, download: '1' })}`;
+      const { uri } = await native.prepareFilePreview({ id, path: endpoint, limit: format.limit });
+      return Capacitor.convertFileSrc(uri);
+    },
+    releaseFilePreview: (id) => native.releaseFilePreview({ id }),
     getSettings: async () => (await native.settings()).settings,
     saveProfile: async (profile) => (await native.saveProfile({ profile })).profile,
     deleteProfile: (id) => native.deleteProfile({ id }),

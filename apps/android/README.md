@@ -54,6 +54,10 @@ Skills、模板和扩展需要先配置到**服务器运行用户或当前项目
 
 Android APK 不打包 Pi Web 服务端源码；统一仓库在 `vendor/pi-web/` 保留固定版本源码。部署时还需应用[安全依赖补丁](../../vendor/patches/security-dependencies.patch)，并按[完整部署说明](../desktop/README.md#pi-web-服务端部署与配置)使用源码安装流程，使依赖覆盖生效。仅更新 APK 不会修复已有服务器的依赖。来源与更新方式见[上游源码说明](../../vendor/README.md)，或 [Pi Web 上游文档](https://github.com/jmfederico/pi-web)。保持服务只监听服务器 `127.0.0.1`，通过 App 的 SSH 隧道访问。
 
+## 文件预览
+
+聊天中的文件链接和行内文件路径可直接打开预览。Markdown 支持阅读／原文切换；两端共用 CSV／TSV／Excel／ODS 表格、音视频播放器和图片预览。表格上限 10 MiB、图片 20 MiB、音视频 128 MiB；音视频完整加载后播放，实际编码支持由设备 WebView 决定。文件经原生 SSH 下载到应用私有缓存，切换或关闭预览会取消请求并清理缓存。完整格式与表格显示限制见[仓库说明](../../README.md#文件预览)。
+
 ## 技术结构
 
 React + TypeScript + Vite 负责手机工作台；Capacitor 8 承载 Android App；Java 原生插件使用 JSch、Bouncy Castle 与 OkHttp 实现 SSH、HTTP/WebSocket 和密钥存储。Pi Web 协议适配层直接调用服务器接口，聊天界面不是嵌入原始 Pi Web 页面。

@@ -2,6 +2,8 @@ import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import type { AppSettings, AuthChallenge, ConnectionState, ServerProfile, Theme } from '../shared/types';
 export interface SocketPacket { id: string; type: 'open' | 'message' | 'close' | 'error'; data?: string; message?: string; }
 interface NativePlugin {
+  prepareFilePreview(options: { id: string; path: string; limit: number }): Promise<{ uri: string }>;
+  releaseFilePreview(options: { id: string }): Promise<void>;
   settings(): Promise<{ settings: AppSettings }>;
   saveProfile(options: { profile: ServerProfile }): Promise<{ profile: ServerProfile }>;
   deleteProfile(options: { id: string }): Promise<void>;
