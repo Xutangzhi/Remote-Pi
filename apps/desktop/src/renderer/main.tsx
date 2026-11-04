@@ -91,7 +91,7 @@ function App() {
       </nav>
       <div className="sidebar-bottom">
         <button className="help-button" title="使用说明" onClick={() => setHelp(true)}><CircleHelp size={16} />使用说明</button>
-        {<div className="sidebar-footnote"><span className="online-dot" />本地客户端 <span>v0.2.24</span></div>}
+        {<div className="sidebar-footnote"><span className="online-dot" />本地客户端 <span>v{import.meta.env.VITE_APP_VERSION}</span></div>}
       </div>
     </aside>
 

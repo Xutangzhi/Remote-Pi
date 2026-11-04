@@ -165,6 +165,23 @@ Passwords, key passphrases, and verification codes are not persisted. Desktop st
 - **Input:** desktop Enter sends and Shift+Enter inserts a newline. On Android, Enter inserts a newline; use the send button or Ctrl/Cmd+Enter on an external keyboard. `@` references point to remote files.
 - **Scope:** file previews and Git diffs are read-only. The clients target direct Pi Web access over SSH; reverse proxies with an extra HTTP authentication layer are not part of the connection flow. New Pi Web versions and third-party plugin interfaces need compatibility checks.
 
+### 文件预览
+
+Mac 和安卓可从聊天里的文件链接或文件面板打开以下只读预览：
+
+- 表格：CSV、TSV、XLSX、XLS、ODS；支持切换工作表、横向滚动，保留文本编号及文件中保存的公式结果，不重新计算公式。CSV／TSV 使用 UTF-8 编码。
+- 视频：MP4、M4V、WebM、OGV、MOV；音频：MP3、WAV、M4A、AAC、OGG、Opus、FLAC。提供播放、暂停及进度控制，不自动播放；实际可播放编码取决于 Electron／Android WebView，无法解码时显示错误。
+- 文档：PDF、DOCX（Word）、PPTX（PowerPoint）；支持上一页／下一页、适合宽度及放大。PDF 使用本地 PDF.js 渲染；Word 按保存的分页展示文字、表格和图片；PPTX 为静态幻灯片预览。复杂排版、缺失字体、动画和嵌入媒体可能与 Office 原件不同。
+- 图片：PNG、JPEG、GIF、WebP、SVG、BMP；原有 Markdown 阅读视图、原文切换及文本／代码预览继续保留。
+
+表格最多读取 10 MiB，显示前 20 个工作表，每表前 1000 行、50 列，单元格最多 2000 字符；超出时提示截断。图片及文档上限 20 MiB，音视频上限 128 MiB。音视频完整加载后播放，暂不提供远端分段流播放。表格解析在 Web Worker 中运行，15 秒超时后停止。
+
+文件使用现有 SSH 连接及 Pi Web 的 `file/preview?download=1` 接口读取，仍遵守服务器的工作区与允许路径限制。Mac 通过应用内部协议传输；安卓先写入应用私有缓存，再交给 WebView，切换／关闭预览会取消读取、释放媒体资源并删除安卓缓存。此能力不需要额外服务端补丁。未支持的二进制文件会明确提示，旧版 DOC／PPT 会提示转换为 DOCX／PPTX／PDF；不渲染 HTML。加密文档须先解锁。Word／PPTX 最多 200 页；PPTX 解压总量限制 100 MiB，解析超过 20 秒会停止。
+
+文档预览使用固定版本的 [PDF.js](https://github.com/mozilla/pdf.js) 5.4.624、[docx-preview](https://github.com/VolodymyrBaydalka/docxjs) 0.4.1、[@office-kit/pptx](https://github.com/office-kit/pptx) 0.28.0 和 pptx-preview 0.21.0；依赖、字符映射及解码器随客户端打包，不依赖第三方在线文档服务。Word 在禁止脚本的隔离框架中显示；PPTX 在 Worker 中解析并作为图片展示。许可证见 `packages/ui/DOCUMENT_PREVIEW_LICENSES.txt`，随两端安装包分发。
+
+表格解析使用 [SheetJS Community Edition 0.20.3](https://docs.sheetjs.com/docs/getting-started/installation/frameworks/)，依赖固定为官方 CDN 包；Apache 2.0 许可证随桌面安装包及安卓第三方声明一起分发。
+
 ### Development and verification
 
 Run these commands from the repository root:

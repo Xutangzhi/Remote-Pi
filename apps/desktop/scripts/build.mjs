@@ -10,7 +10,9 @@ export async function buildDesktop() {
     outdir: 'dist', outExtension: { '.js': '.cjs' },
     bundle: true, platform: 'node', format: 'cjs', external: ['electron'],
   });
+  await copyFile('../../packages/ui/DOCUMENT_PREVIEW_LICENSES.txt', 'dist/DOCUMENT_PREVIEW_LICENSES.txt');
   await copyFile('../../LICENSE', 'dist/LICENSE');
+  await copyFile(new URL('./LICENSE', import.meta.resolve('xlsx')), 'dist/SHEETJS-LICENSE');
   await copyFile('../../vendor/pi-web/LICENSE', 'dist/PI-WEB-LICENSE');
   await copyFile('src/main/askpass.cjs', 'dist/askpass.cjs');
   await copyFile('src/main/refresh-environment.py', 'dist/refresh-environment.py');

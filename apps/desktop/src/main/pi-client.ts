@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { posix } from 'node:path';
+import { filePreviewFormat } from '../shared/file-preview';
 import type { FileSuggestion, PiOperation, SessionRef, SessionEvent, TerminalPacket, TranscriptSnapshot, WorkspacePacket } from '../shared/pi';
 
 const prefix = '/api/machines/local';
@@ -71,6 +72,38 @@ export class PiClient extends EventEmitter {
     catch { throw new Error(`服务器接口返回了非 JSON 内容（HTTP ${response.status}）。请检查 Pi Web 版本。`); }
     if (!response.ok) throw new Error(typeof result.error === 'string' ? result.error : `Pi Web 请求失败（HTTP ${response.status}）。`);
     return result as T;
+  }
+
+  async filePreview(input: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
+    if (!this.baseURL) throw new Error('请先连接 SSH 服务器。');
+    const path = text(input.path, '文件路径');
+    const format = filePreviewFormat(path);
+    if (!format) throw new Error('暂不支持此文件格式的预览。');
+    const controller = new AbortController();
+    const response = await fetch(`${this.baseURL}${workspacePath(input)}/file/preview?${new URLSearchParams({ path, download: '1' })}`, {
+      redirect: 'error', signal: AbortSignal.any([controller.signal, this.lifetime.signal, AbortSignal.timeout(120_000), ...(signal ? [signal] : [])]),
+    });
+    const tooLarge = () => new Error(`文件过大，此格式最多预览 ${format.limitMiB} MiB。`);
+    if (!response.ok || Number(response.headers.get('content-length')) > format.limit) {
+      await response.body?.cancel().catch(() => {});
+      if (!response.ok) throw new Error(`无法读取预览文件（HTTP ${response.status}），请检查文件权限和 Pi Web 版本。`);
+      throw tooLarge();
+    }
+    const reader = response.body?.getReader();
+    let length = 0;
+    const body = new ReadableStream<Uint8Array>({
+      async pull(stream) {
+        try {
+          const result = await reader?.read();
+          if (!result || result.done) { stream.close(); return; }
+          length += result.value.byteLength;
+          if (length > format.limit) { await reader?.cancel(); throw tooLarge(); }
+          stream.enqueue(result.value);
+        } catch (error) { controller.abort(); stream.error(error); }
+      },
+      async cancel() { controller.abort(); await reader?.cancel().catch(() => {}); },
+    });
+    return new Response(body, { headers: { 'content-type': format.mime, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
   }
 
   async request(operation: PiOperation, input: Record<string, unknown> = {}): Promise<unknown> {

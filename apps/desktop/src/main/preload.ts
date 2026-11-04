@@ -3,6 +3,8 @@ import type { AuthChallenge, ConnectionState, DesktopBridge, EnvironmentRefresh 
 import type { TerminalPacket, WorkspacePacket } from '../shared/pi';
 
 const bridge: DesktopBridge = {
+  prepareFilePreview: async ({ projectId, workspaceId, path }) => `remote-pi://app/file-preview?${new URLSearchParams({ projectId, workspaceId, path })}`,
+  releaseFilePreview: async () => {},
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveProfile: (profile) => ipcRenderer.invoke('profile:save', profile),
   deleteProfile: (id) => ipcRenderer.invoke('profile:delete', id),

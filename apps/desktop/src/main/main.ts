@@ -11,6 +11,8 @@ import type { AuthChallenge, ConnectionState, EnvironmentRefresh, Theme } from '
 app.setName('Remote Pi');
 protocol.registerSchemesAsPrivileged([{ scheme: 'remote-pi', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const testMode = !app.isPackaged && process.env.REMOTE_PI_TEST_MODE === '1';
+const backgroundTests = testMode && process.env.REMOTE_PI_TEST_SHOW_WINDOWS !== '1';
+if (backgroundTests && process.platform === 'darwin') app.setActivationPolicy('prohibited');
 if (testMode && process.env.REMOTE_PI_USER_DATA) app.setPath('userData', process.env.REMOTE_PI_USER_DATA);
 let mainWindow: BrowserWindow;
 const pi = new PiClient();
@@ -67,6 +69,7 @@ function validWebURL(url: string): boolean {
 function openLinkInsideApp(url: string): void {
   if (!validWebURL(url)) return;
   const child = new BrowserWindow({ parent: mainWindow, width: 1040, height: 760, title: 'Remote Pi · Browser',
+    show: !backgroundTests, focusable: !backgroundTests,
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true }, });
   child.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   child.webContents.on('will-navigate', (event, next) => { if (!validWebURL(next)) event.preventDefault(); });
@@ -84,6 +87,7 @@ function registerIPC(): void {
     await store.deleteProfile(id);
   });
   handle('identity:pick', async () => {
+    if (backgroundTests) throw new Error('后台测试不打开系统文件选择器；请使用专门的前台测试。');
     const result = await dialog.showOpenDialog(mainWindow, { title: '选择 SSH 私钥', properties: ['openFile', 'showHiddenFiles'] });
     return result.canceled ? null : result.filePaths[0];
   });
@@ -134,7 +138,13 @@ function registerIPC(): void {
 
 async function boot(): Promise<void> {
   const rendererRoot = resolve(__dirname, 'renderer');
-  protocol.handle('remote-pi', (request) => {
+  protocol.handle('remote-pi', async (request) => {
+    const url = new URL(request.url);
+    if (url.hostname !== 'app') return new Response('Forbidden', { status: 403 });
+    if (url.pathname === '/file-preview') {
+      try { return await pi.filePreview(Object.fromEntries(url.searchParams), request.signal); }
+      catch (error) { return new Response((error as Error).message, { status: 400, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } }); }
+    }
     const file = resolve(rendererRoot, `.${decodeURIComponent(new URL(request.url).pathname)}`);
     if (!file.startsWith(`${rendererRoot}${sep}`)) return new Response('Forbidden', { status: 403 });
     return net.fetch(pathToFileURL(file).toString());
@@ -161,9 +171,10 @@ async function boot(): Promise<void> {
   });
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
   mainWindow = new BrowserWindow({ width: Math.min(1320, width), height: Math.min(860, height), minWidth: Math.min(520, width), minHeight: Math.min(480, height),
+    show: !backgroundTests, focusable: !backgroundTests,
     title: 'Remote Pi', icon: join(__dirname, 'icon.png'), titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 20, y: 22 },
     backgroundColor: settings.theme === 'dark' ? '#222325' : '#fafafa',
-    webPreferences: { preload: join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false },
+    webPreferences: { preload: join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: !backgroundTests },
   });
   const fitDisplay = () => {
     if (mainWindow.isFullScreen() || mainWindow.isMaximized()) return;
@@ -201,6 +212,6 @@ async function boot(): Promise<void> {
   await mainWindow.loadURL(devURL ?? 'remote-pi://app/index.html');
 }
 
-void app.whenReady().then(boot).catch((error) => { dialog.showErrorBox('Remote Pi 启动失败', String(error)); app.quit(); });
+void app.whenReady().then(boot).catch((error) => { if (backgroundTests) console.error('Remote Pi 启动失败', error); else dialog.showErrorBox('Remote Pi 启动失败', String(error)); app.quit(); });
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', (event) => { if (!quitting && mainWindow && !mainWindow.isDestroyed()) { event.preventDefault(); mainWindow.close(); } });

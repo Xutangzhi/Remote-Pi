@@ -1,4 +1,7 @@
+import { checkDocumentPreviews } from '../../../desktop/tests/document-preview-checks';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+import { utils, write } from 'xlsx';
 
 async function fixture(page: Page, theme: 'light' | 'dark' = 'light') {
   await page.addInitScript(({ theme }) => {
@@ -63,6 +66,7 @@ async function fixture(page: Page, theme: 'light' | 'dark' = 'light') {
         ];
         if (operation === 'session.command') return { type: 'done', message: '已调用远端技能' };
         if (operation === 'session.shell') return {};
+        if (operation === 'session.ask') return {};
         if (operation === 'files.suggest') return (input.query === 'src/renderer/' ? ['src/renderer/Workspace.tsx'] : ['src/renderer/']).map((path) => ({ path, kind: 'tracked' }));
         if (operation === 'files.tree') return { path: '', entries: [{ name: 'README.md', path: 'README.md', type: 'file' }], truncated: false };
         if (operation === 'files.read') return { path: 'README.md', content: '# Remote Pi Android\n\n手机端文件预览。', binary: false, truncated: false };
@@ -76,7 +80,10 @@ async function fixture(page: Page, theme: 'light' | 'dark' = 'light') {
         watching = { ...session, sub };
         setTimeout(() => {
           if (watching?.sub !== sub) return;
-          const messages = session.id === 'main' ? [
+          const messages = session.id === 'main' && w.__fixture.askRequest ? [
+            { role: 'assistant', entryId: 'ask-intro', content: '请选择翻译方式。' },
+            { role: 'toolResult', toolCallId: 'ask-tool', toolName: 'ask_user', content: '等待回答', isError: false, details: { ask: w.__fixture.askRequest } },
+          ] : session.id === 'main' ? [
             { role: 'user', entryId: 'u1', content: '把服务器上的工作带到手机上。' },
             { role: 'assistant', entryId: 'a1', content: [{ type: 'text', text: answer }, { type: 'toolCall', id: 'read-1', name: 'read', arguments: { path: 'README.md' } }] },
             { role: 'toolResult', entryId: 't1', toolCallId: 'read-1', toolName: 'read', content: toolOutput, isError: false },
@@ -109,6 +116,32 @@ async function screenshot(page: Page, testInfo: TestInfo, name: string) {
   await page.screenshot({ path, animations: 'disabled' });
   await testInfo.attach(name, { path, contentType: 'image/png' });
 }
+
+test('phone question choices can be cleared by touch and stay exclusive with custom text', async ({ page }) => {
+  await fixture(page);
+  await page.evaluate(() => {
+    (window as any).__fixture.askRequest = { askId: 'translation-ask', questions: [{
+      id: 'translation_type', question: '请选择翻译方式',
+      options: [{ value: 'literal', label: '直译' }, { value: 'natural', label: '意译' }],
+    }] };
+  });
+  await connect(page);
+  const form = page.locator('form.ask-form');
+  const literal = form.getByRole('radio', { name: '直译', exact: true });
+  await literal.tap();
+  await expect(literal).toBeChecked();
+  await literal.tap();
+  await expect(literal).not.toBeChecked();
+  await literal.tap();
+  await form.getByRole('textbox').fill('使用自定义术语');
+  await expect(literal).not.toBeChecked();
+  await form.getByRole('radio', { name: '意译', exact: true }).tap();
+  await expect(form.getByRole('textbox')).toHaveValue('');
+  await form.getByRole('button', { name: '提交回答' }).tap();
+  await expect(page.locator('.ask-form')).toHaveText('回答已提交');
+  const answers = await page.evaluate(() => (window as any).__fixture.calls.find((call: any) => call.operation === 'session.ask').input.answers);
+  expect(answers).toEqual([{ id: 'translation_type', values: ['natural'] }]);
+});
 
 for (const theme of ['light', 'dark'] as const) {
   test(`${theme} phone connection, chat, drawer, completions and workspace tools`, async ({ page }, testInfo) => {
@@ -314,4 +347,59 @@ test('Git explains untracked files without mislabeling an empty staged diff', as
   await page.getByLabel('查看文件差异', { exact: true }).selectOption('README.md');
   await expect(page.locator('.diff-content pre')).toContainText('+# New project');
   await expect(hint).toHaveCount(0);
+});
+
+
+test('phone previews spreadsheets and media, switches sheets and releases each file', async ({ page }, testInfo) => {
+  const book = utils.book_new();
+  utils.book_append_sheet(book, utils.aoa_to_sheet([['中文列', '编号'], ['手机预览', '001']]), '数据');
+  utils.book_append_sheet(book, utils.aoa_to_sheet([['第二张表']]), '详情');
+  const files: Record<string, Buffer> = {
+    'report.xlsx': write(book, { type: 'buffer', bookType: 'xlsx' }),
+    'sample.csv': Buffer.from('名称,编号\n测试,007'),
+    'clip.webm': await readFile('../desktop/tests/assets/preview.webm'),
+    'sound.wav': await readFile('../desktop/tests/assets/preview.wav'),
+    'broken.xlsx': Buffer.from('broken'),
+  };
+  for (const path of ['preview.pdf', 'locked.pdf', 'preview.docx', 'preview.pptx']) files[path] = await readFile(`../desktop/tests/assets/${path}`);
+  for (const path of ['broken.pdf', 'broken.docx', 'broken.pptx', 'legacy.doc', 'legacy.ppt']) files[path] = Buffer.from('broken');
+  await page.route('**/preview-fixture/*', async (route) => {
+    const path = decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-1)!);
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: files[path] });
+  });
+  await fixture(page);
+  await page.evaluate((paths) => {
+    const w = window as any; const original = w.desktop.piRequest;
+    w.__fixture.released = [];
+    w.desktop.prepareFilePreview = async ({ path }: any) => `${location.origin}/preview-fixture/${encodeURIComponent(path)}`;
+    w.desktop.releaseFilePreview = async (id: string) => { w.__fixture.released.push(id); };
+    w.desktop.piRequest = async (operation: string, input: any) => {
+      if (operation === 'files.tree') return { path: '', entries: paths.map((path) => ({ name: path, path, type: 'file' })), truncated: false };
+      if (operation === 'files.read') return { path: input.path, content: '', binary: true, truncated: false };
+      return original(operation, input);
+    };
+  }, Object.keys(files));
+  await connect(page);
+  await page.getByRole('button', { name: '文件面板', exact: true }).tap();
+  const open = async (path: string) => { if (await page.locator('.file-back').count()) await page.locator('.file-back').tap(); await page.getByRole('button', { name: path, exact: true }).tap(); };
+  await open('report.xlsx');
+  await expect(page.getByRole('cell', { name: '手机预览', exact: true })).toBeVisible();
+  await page.getByLabel('选择工作表').selectOption({ label: '详情' });
+  await expect(page.getByRole('cell', { name: '第二张表', exact: true })).toBeVisible();
+  await screenshot(page, testInfo, 'phone-spreadsheet');
+  await open('sample.csv'); await expect(page.getByRole('cell', { name: '007', exact: true })).toBeVisible();
+  for (const [path, tag] of [['clip.webm', 'video'], ['sound.wav', 'audio']]) {
+    await open(path!);
+    const media = page.locator(`.rich-file-preview ${tag}`);
+    await expect.poll(() => media.evaluate((element: HTMLMediaElement) => element.readyState)).toBeGreaterThanOrEqual(1);
+    await media.evaluate(async (element: HTMLMediaElement) => { element.muted = true; await element.play(); });
+    await expect.poll(() => media.evaluate((element: HTMLMediaElement) => element.currentTime)).toBeGreaterThan(0);
+    await fits(page);
+  }
+  await open('broken.xlsx'); await expect(page.locator('.rich-file-preview [role="alert"]')).toContainText('无法解析');
+  await checkDocumentPreviews(page, open, (name) => screenshot(page, testInfo, `phone-${name}`));
+  await fits(page);
+  await screenshot(page, testInfo, 'phone-document');
+  await back(page); await expect(page.locator('.inspector')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => (window as any).__fixture.released.length)).toBe(15);
 });

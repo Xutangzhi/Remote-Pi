@@ -1,6 +1,8 @@
 import { getBridge } from './bridge';
 import { isValidElement, useEffect, useRef, useState, type ReactNode } from 'react';
-import Markdown from 'react-markdown';
+import Markdown, { defaultUrlTransform } from 'react-markdown';
+import { fileLinkPath, remarkFileReferences } from './file-links';
+export { fileLinkPath, remoteFilePath } from './file-links';
 import remarkGfm from 'remark-gfm';
 import { Check, ChevronRight, Copy, Terminal, X } from 'lucide-react';
 import type { AskRequest, SessionRef } from '@remote-pi/core/pi';
@@ -25,9 +27,9 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   return <div className="code-block"><div className="code-block-toolbar"><span>{code?.props.className?.replace(/^language-/, '') || '代码'}</span><CopyButton text={(code?.props.children || '').replace(/\n$/, '')} label="复制代码" /></div><pre>{children}</pre></div>;
 }
 
-export function RichText({ text }: { text: string }) {
-  return <div className="prose"><Markdown remarkPlugins={[remarkGfm]} components={{
-    a: ({ href, children }) => <a href={href} onClick={(event) => { event.preventDefault(); if (href && /^https?:\/\//.test(href)) void getBridge().openLink(href); }}>{children}</a>,
+export function RichText({ text, onOpenFile }: { text: string; onOpenFile?: (path: string) => void }) {
+  return <div className="prose"><Markdown remarkPlugins={onOpenFile ? [remarkGfm, remarkFileReferences] : [remarkGfm]} urlTransform={(url) => onOpenFile && fileLinkPath(url) ? url : defaultUrlTransform(url)} components={{
+    a: ({ href, children }) => <a href={href} title={href && onOpenFile && fileLinkPath(href) ? `预览远端文件：${href}` : undefined} onClick={(event) => { event.preventDefault(); if (!href) return; if (/^https?:\/\//i.test(href)) void getBridge().openLink(href); else if (onOpenFile && fileLinkPath(href)) onOpenFile(href); }}>{children}</a>,
     img: ({ alt }) => <span className="muted">[图片：{alt || '外部图片'}]</span>,
     pre: CodeBlock,
   }}>{text}</Markdown></div>;
@@ -56,22 +58,44 @@ function ToolCard({ tool, session, onError, allowAsk }: { allowAsk: boolean; too
 function AskForm({ request, session, onError }: { request: AskRequest; session: SessionRef; onError: (error: unknown) => void }) {
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
   const [other, setOther] = useState<Record<string, string>>({});
-  const [sent, setSent] = useState(false);
+  const [sent, setSent] = useState<'submitted' | 'cancelled'>();
   const [busy, setBusy] = useState(false);
   const submit = async (cancel = false) => {
+    if (busy) return;
     setBusy(true);
-    try { await piRequest('session.ask', { ...sessionInput(session), askId: request.askId, cancel, answers: request.questions.map((question) => ({ id: question.id, values: answers[question.id] || [], ...(other[question.id] ? { otherText: other[question.id] } : {}) })) }); setSent(true); }
+    try {
+      await piRequest('session.ask', { ...sessionInput(session), askId: request.askId, ...(cancel ? { cancel: true } : {
+        answers: request.questions.map((question) => {
+          const otherText = other[question.id]?.trim();
+          return { id: question.id, values: otherText && !question.multiple ? [] : answers[question.id] || [], ...(otherText ? { otherText } : {}) };
+        }),
+      }) });
+      setSent(cancel ? 'cancelled' : 'submitted');
+    }
     catch (error) { onError(error); } finally { setBusy(false); }
   };
-  if (sent) return <div className="ask-form muted">回答已提交</div>;
-  return <form className="ask-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>{request.questions.map((question) => <fieldset key={question.id} disabled={busy}><legend>{question.question}</legend>{question.detail && <p>{question.detail}</p>}{question.options.map((option) => <label className="ask-option" key={option.value}><input type={question.multiple ? 'checkbox' : 'radio'} name={question.id} checked={answers[question.id]?.includes(option.value) || false} onChange={(event) => setAnswers((previous) => ({ ...previous, [question.id]: question.multiple ? event.target.checked ? [...previous[question.id] || [], option.value] : (previous[question.id] || []).filter((value) => value !== option.value) : [option.value] }))} /><span>{option.label}{option.detail && <small>{option.detail}</small>}</span></label>)}<input placeholder="补充回答…" aria-label={`${question.question} 补充回答`} value={other[question.id] || ''} onChange={(event) => setOther({ ...other, [question.id]: event.target.value })} /></fieldset>)}<div className="dialog-footer"><button type="button" className="button secondary" disabled={busy} onClick={() => void submit(true)}>取消</button><button className="button primary" disabled={busy || !request.questions.every((question) => answers[question.id]?.length || other[question.id]?.trim())}>提交回答</button></div></form>;
+  if (sent) return <div className="ask-form muted">{sent === 'cancelled' ? '已取消回答' : '回答已提交'}</div>;
+  return <form className="ask-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>{request.questions.map((question) => <fieldset key={question.id} disabled={busy}><legend>{question.question}</legend>{question.detail && <p>{question.detail}</p>}{question.options.map((option) => <label className="ask-option" key={option.value}>
+    <input type={question.multiple ? 'checkbox' : 'radio'} name={`${request.askId}:${question.id}`} checked={answers[question.id]?.includes(option.value) || false}
+      onClick={() => { if (!question.multiple && answers[question.id]?.includes(option.value)) setAnswers((previous) => ({ ...previous, [question.id]: [] })); }}
+      onChange={(event) => {
+        const checked = event.target.checked;
+        setAnswers((previous) => ({ ...previous, [question.id]: question.multiple ? checked ? [...previous[question.id] || [], option.value] : (previous[question.id] || []).filter((value) => value !== option.value) : [option.value] }));
+        if (!question.multiple) setOther((previous) => ({ ...previous, [question.id]: '' }));
+      }} />
+    <span>{option.label}{option.detail && <small>{option.detail}</small>}</span>
+  </label>)}<input placeholder={question.multiple ? '补充回答…' : '或输入自定义回答…'} aria-label={`${question.question} 补充回答`} maxLength={4000} value={other[question.id] || ''} onChange={(event) => {
+    const value = event.target.value;
+    setOther((previous) => ({ ...previous, [question.id]: value }));
+    if (!question.multiple && value.trim()) setAnswers((previous) => ({ ...previous, [question.id]: [] }));
+  }} /></fieldset>)}<div className="dialog-footer"><button type="button" className="button secondary" disabled={busy} onClick={() => void submit(true)}>取消</button><button className="button primary" disabled={busy || !request.questions.every((question) => answers[question.id]?.length || other[question.id]?.trim())}>提交回答</button></div></form>;
 }
 
-export function Transcript({ items, session, onError }: { items: TranscriptItem[]; session: SessionRef; onError: (error: unknown) => void }) {
+export function Transcript({ items, session, onError, onOpenFile }: { items: TranscriptItem[]; session: SessionRef; onError: (error: unknown) => void; onOpenFile?: (path: string) => void }) {
   return <>{items.map((item, index) => item.kind === 'tool' ? <ToolCard key={item.id} allowAsk={index === items.length - 1} tool={item} session={session} onError={onError} /> : (item.text || item.thinking || item.images.length) ? <article key={item.id} className={`message message-${item.role}`} data-testid={`message-${item.role}`}>
     {item.role === 'assistant' && <div className="assistant-label"><span className="pi-glyph">π</span>Pi<span>{item.model}</span></div>}
-    {item.thinking && <details className="thinking"><summary><ChevronRight size={13} />思考过程</summary><RichText text={item.thinking} /></details>}
-    <div className="message-content"><RichText text={item.text} />{item.images.map((image, index) => <ConversationImage key={index} image={image} session={session} />)}</div>
+    {item.thinking && <details className="thinking"><summary><ChevronRight size={13} />思考过程</summary><RichText text={item.thinking} onOpenFile={onOpenFile} /></details>}
+    <div className="message-content"><RichText text={item.text} onOpenFile={onOpenFile} />{item.images.map((image, index) => <ConversationImage key={index} image={image} session={session} />)}</div>
     {item.text && !item.live && <div className="message-actions"><CopyButton text={item.text} label={item.role === 'assistant' ? '复制回复' : '复制消息'} /></div>}
   </article> : null)}</>;
 }

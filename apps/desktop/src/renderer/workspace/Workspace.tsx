@@ -6,6 +6,7 @@ import { isWorking, piRequest, sessionInput, sessionKey, sessionTitle } from './
 import { applyEvent, fromSnapshot, prependHistory, type TranscriptState } from './transcript';
 import { Transcript } from './ChatTranscript';
 import { Inspector, type Panel } from './Inspector';
+import { remoteFilePath } from './file-links';
 import { ResizeHandle } from './ResizeHandle';
 import { useDialogFocus } from './useDialogFocus';
 import { useSessionIndicators } from './useSessionIndicators';
@@ -60,6 +61,7 @@ export function Workspace({ profile, theme, onManage, onTheme, onDisconnect }: {
   useEffect(() => { try { localStorage.setItem(paneSizesKey, JSON.stringify(paneSizes)); } catch {} }, [paneSizes]);
   const setPaneSize = (key: keyof PaneSizes, value?: number) => setPaneSizes((previous) => ({ ...previous, [key]: value }));
   const [panel, setPanel] = useState<Panel>();
+  const [fileRequest, setFileRequest] = useState<{ workspaceId: string; path: string }>();
   const [mountedPanel, setMountedPanel] = useState<Panel>();
   const [dialog, setDialog] = useState<'project' | 'session' | 'rename'>();
   const [newProjectId, setNewProjectId] = useState('');
@@ -316,6 +318,13 @@ export function Workspace({ profile, theme, onManage, onTheme, onDisconnect }: {
     catch (reason) { report(reason); }
   };
   const newSession = (projectId?: string) => { setNewProjectId(projectId || selection?.project.id || groups[0]?.project.id || ''); setDialog(groups.length ? 'session' : 'project'); };
+  const openFile = (href: string) => {
+    if (!selection) return;
+    try {
+      setFileRequest({ workspaceId: selection.workspace.id, path: remoteFilePath(href, selection.workspace.path, selection.session.cwd) });
+      setPanel('files');
+    } catch (reason) { report(reason); }
+  };
   const togglePanel = (value: Panel) => setPanel((previous) => previous === value ? undefined : value);
   const selectedModel = status?.model?.provider && status.model.id ? `${status.model.provider}\0${status.model.id}` : '';
   const allModels = models.some((model) => `${model.provider}\0${model.id}` === selectedModel) || !status?.model ? models : [status.model, ...models];
@@ -355,7 +364,7 @@ export function Workspace({ profile, theme, onManage, onTheme, onDisconnect }: {
         <div className="conversation-intro"><span><MessageSquare size={14} />{selection.workspace.path}</span><h1>{sessionTitle(selection.session)}</h1></div>
         {start > 0 && <button className="load-history" disabled={olderLoading} onClick={() => void loadOlder()}>{olderLoading ? '加载中…' : '加载更早的消息'}</button>}
         {stream === 'connecting' && !transcript.items.length ? <div className="transcript-loading"><span className="spinner" />正在读取对话…</div> : !transcript.items.length && stream === 'live' ? <div className="empty-conversation"><span className="pi-glyph">π</span><h2>从一个想法开始。</h2><p>描述你想完成的工作，Pi 会在此目录中执行。</p></div> : null}
-        <Transcript items={transcript.items} session={selection.session} onError={report} />
+        <Transcript items={transcript.items} session={selection.session} onError={report} onOpenFile={openFile} />
         {working && <div className="working-status"><span className="spinner" />{status?.isCompacting ? '正在整理上下文' : status?.isBashRunning ? '正在执行命令' : 'Pi 正在工作'}<span>远端运行中</span></div>}
       </div></div>
       <div className="composer-region">{!nearBottom && <button className="jump-bottom" aria-label="回到底部" onClick={jumpToBottom}><ArrowDown size={16} /></button>}{stream !== 'live' && <div className={`stream-notice ${stream === 'error' ? 'stream-error' : ''}`}>{stream === 'error' ? '对话连接失败' : stream === 'reconnecting' ? '连接中断，正在恢复对话…' : '正在连接会话…'}{stream === 'error' && <button onClick={() => { setError(''); setRetry((value) => value + 1); }}>重新连接</button>}</div>}
@@ -372,7 +381,7 @@ export function Workspace({ profile, theme, onManage, onTheme, onDisconnect }: {
         <div className="composer-footnote"><span><span className="online-dot" />SSH 已连接 · 远端执行</span><span>{status?.contextUsage?.percent != null ? `上下文 ${Math.round(status.contextUsage.percent)}% · ` : ''}{status?.cost ? `$${status.cost.toFixed(3)} · ` : ''}↑↓ 历史 · Enter 发送 · ⇧ Enter 换行</span></div>
       </div></> : <div className="workspace-welcome"><span className="welcome-symbol">π</span><span className="eyebrow">REMOTE PI WORKSPACE</span><h1>让想法，成为进展。</h1><p>选择左侧的对话继续工作，<br />或从服务器上的一个目录开始。</p><div><button className="button primary" onClick={() => newSession()}><Plus size={16} />新建对话</button><button className="button secondary" onClick={() => setDialog('project')}><FolderPlus size={16} />添加项目</button></div><small><span className="online-dot" />已连接 {profile?.name}</small></div>}
     </main>
-    {selection && displayedPanel && <Inspector key={`${selection.workspace.id}:${retry}`} project={selection.project} workspace={selection.workspace} panel={displayedPanel} closing={!panel} onClose={() => setPanel(undefined)} resizeHandle={<ResizeHandle label={stackedPanel ? '调整面板高度' : '调整右侧栏宽度'} horizontal={stackedPanel} direction={-1} value={stackedPanel ? bottomHeight : rightWidth} min={stackedPanel ? 160 : 280} max={stackedPanel ? bottomMax : rightMax} onChange={(value) => setPaneSize(stackedPanel ? 'bottom' : 'right', value)} onReset={() => setPaneSize(stackedPanel ? 'bottom' : 'right')} onDragging={setResizing} />} />}
+    {selection && displayedPanel && <Inspector key={`${selection.workspace.id}:${retry}`} project={selection.project} workspace={selection.workspace} panel={displayedPanel} fileRequest={fileRequest?.workspaceId === selection.workspace.id ? fileRequest : undefined} closing={!panel} onClose={() => setPanel(undefined)} resizeHandle={<ResizeHandle label={stackedPanel ? '调整面板高度' : '调整右侧栏宽度'} horizontal={stackedPanel} direction={-1} value={stackedPanel ? bottomHeight : rightWidth} min={stackedPanel ? 160 : 280} max={stackedPanel ? bottomMax : rightMax} onChange={(value) => setPaneSize(stackedPanel ? 'bottom' : 'right', value)} onReset={() => setPaneSize(stackedPanel ? 'bottom' : 'right')} onDragging={setResizing} />} />}
     {dialog && <WorkspaceDialog kind={dialog} groups={groups} initialProjectId={newProjectId} selection={selection} onClose={() => setDialog(undefined)} onCreated={(value) => { pick(value); setDialog(undefined); void refresh(); }} onUpdated={() => { setDialog(undefined); void refresh(); }} />}
     {command && selection && sessionKey(command.session) === activeKey && <CommandDialog key={`${activeKey}:${command.result.type === 'select' ? command.result.requestId : 'tree'}`} pending={command} onClose={() => setCommand(undefined)} onResult={(result, reload) => { applyCommandResult(selection, result, reload); }} onLocal={async (value) => {
       if (command.local === 'model') { const [provider, modelId] = value.split('\0'); const next = await piRequest<SessionStatus>('session.model', { ...sessionInput(command.session), provider, modelId }); if (selectionRef.current && sessionKey(selectionRef.current.session) === sessionKey(command.session)) setStatus(next); }

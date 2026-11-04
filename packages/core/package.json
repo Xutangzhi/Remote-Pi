@@ -10,6 +10,7 @@
     "./transcript": "./src/transcript.ts",
     "./session-tree": "./src/session-tree.ts",
     "./session-indicators": "./src/session-indicators.ts",
-    "./prompt-completions": "./src/prompt-completions.ts"
+    "./prompt-completions": "./src/prompt-completions.ts",
+    "./file-preview": "./src/file-preview.ts"
   }
 }

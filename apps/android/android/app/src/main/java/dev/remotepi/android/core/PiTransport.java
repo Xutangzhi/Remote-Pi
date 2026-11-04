@@ -54,12 +54,15 @@ public final class PiTransport {
         return request(path, method, body, 35000);
     }
     public Response request(String path, String method, String body, int timeoutMs) throws IOException {
+        return newRequest(path, method, body, timeoutMs).execute();
+    }
+    public Call newRequest(String path, String method, String body, int timeoutMs) {
         if (timeoutMs < 1000 || timeoutMs > 300000) throw new IllegalArgumentException("请求超时必须介于 1 秒和 5 分钟之间。");
         if (!method.equals("GET") && !method.equals("POST") && !method.equals("PUT")) throw new IllegalArgumentException("不支持的请求方法。");
         RequestBody data = method.equals("GET") ? null : RequestBody.create(body == null ? "{}" : body, MediaType.get("application/json; charset=utf-8"));
         String target = validatePath(path); Route current = route();
         Request request = new Request.Builder().url(current.base + target).method(method, data).build();
-        return current.client.newBuilder().readTimeout(timeoutMs, TimeUnit.MILLISECONDS).callTimeout(timeoutMs, TimeUnit.MILLISECONDS).build().newCall(request).execute();
+        return current.client.newBuilder().readTimeout(timeoutMs, TimeUnit.MILLISECONDS).callTimeout(timeoutMs, TimeUnit.MILLISECONDS).build().newCall(request);
     }
     public synchronized void openSocket(String id, String path) {
         if (id == null || id.length() > 80 || sockets.containsKey(id)) throw new IllegalArgumentException("连接 ID 无效。");

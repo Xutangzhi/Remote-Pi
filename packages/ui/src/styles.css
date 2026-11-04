@@ -170,3 +170,29 @@ h3 { font-size: 11px; margin: 0; font-weight: 550; color: var(--text-secondary);
   .modal-backdrop { padding:20px; }
   .auth-dialog, .help-dialog { max-width:100%; max-height:calc(100dvh - 40px); padding:24px; }
 }
+
+.rich-file-preview { display:flex; flex-direction:column; flex:1; min-height:0; overflow:auto; }
+.rich-file-preview video,.rich-file-preview audio { display:block; width:calc(100% - 24px); margin:12px; flex:none; }
+.rich-file-preview video { max-height:70vh; background:#111; }
+.rich-file-preview > img { display:block; max-width:100%; max-height:75vh; object-fit:contain; padding:12px; }
+.sheet-selector { display:flex; gap:10px; align-items:center; padding:10px 15px; font-size:11px; }
+.sheet-selector select { min-width:0; flex:1; padding:6px; color:var(--text); background:var(--card); border:1px solid var(--border); border-radius:6px; }
+.sheet-grid { flex:1; min-height:0; overflow:auto; }
+.sheet-grid table { border-collapse:separate; border-spacing:0; font-size:11px; min-width:100%; }
+.sheet-grid th,.sheet-grid td { border-right:1px solid var(--border); border-bottom:1px solid var(--border); padding:6px 10px; text-align:left; vertical-align:top; white-space:pre-wrap; min-width:70px; max-width:360px; overflow-wrap:anywhere; }
+.sheet-grid thead th { position:sticky; top:0; z-index:2; background:var(--sidebar); }
+.sheet-grid thead th:first-child { width:40px; min-width:40px; }
+.sheet-grid tbody th { position:sticky; left:0; z-index:1; background:var(--sidebar); min-width:36px; color:var(--muted); }
+
+.file-preview-controls { display:flex; gap:6px; padding:8px 15px; border-bottom:1px solid var(--border); }
+.file-preview-controls button[aria-pressed="true"] { background:var(--hover); color:var(--text); }
+.markdown-preview { font-family:var(--font-ui); }
+
+.document-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 8px; flex-shrink: 0; }
+.document-controls button, .document-controls select { padding: 6px 8px; font: inherit; font-size: 12px; color: var(--text); background: var(--card); border: 1px solid var(--border); border-radius: 6px; }
+.document-controls button:disabled { opacity: .45; }
+.document-controls span { white-space: nowrap; font-size: 12px; }
+.document-viewport { flex: 1; min-height: 0; overflow: auto; padding: 8px; background: #dedede; }
+.document-viewport canvas { display: block; margin: 0 auto; background: white; }
+.presentation-preview .document-viewport img { display: block; max-width: none; max-height: none; background: white; }
+.word-document { width: 100%; flex: 1; min-height: 300px; border: 0; background: #dedede; }

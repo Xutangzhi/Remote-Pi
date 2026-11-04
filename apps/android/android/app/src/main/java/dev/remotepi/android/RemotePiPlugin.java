@@ -11,6 +11,7 @@ import com.getcapacitor.*;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import dev.remotepi.android.core.PiTransport;
+import dev.remotepi.android.core.FilePreviewCache;
 import dev.remotepi.android.core.SshTunnel;
 import okhttp3.Response;
 import org.json.JSONObject;
@@ -31,6 +32,7 @@ public class RemotePiPlugin extends Plugin {
     private SecureStore store;
     private SshTunnel tunnel;
     private PiTransport transport;
+    private FilePreviewCache filePreviews;
     private volatile JSObject state = new JSObject().put("phase", "idle").put("message", "尚未连接服务器");
     private volatile JSObject desiredProfile;
     private volatile boolean connecting;
@@ -41,6 +43,7 @@ public class RemotePiPlugin extends Plugin {
     @Override public void load() {
         main.postDelayed(monitor, 10000);
         store = new SecureStore(getContext());
+        try { filePreviews = new FilePreviewCache(new File(getContext().getCacheDir(), "file-previews")); } catch (Exception error) { throw new IllegalStateException(error); }
         try { applyTheme(store.settings().optString("theme", "light")); } catch (Exception ignored) { }
         tunnel = new SshTunnel(new File(getContext().getFilesDir(), "known_hosts"));
         transport = new PiTransport(tunnel, (id, type, data) -> {
@@ -73,7 +76,7 @@ public class RemotePiPlugin extends Plugin {
         connecting = true; final int ticket = attempt.incrementAndGet();
         String profileId = profile.optString("id");
         updateState("connecting", "正在连接 " + profile.optString("name") + "…", profileId);
-        transport.disconnect();
+        filePreviews.clear(); transport.disconnect();
         workers.execute(() -> {
             try {
                 JSObject saved = store.saveProfile(profile); SshTunnel.Options options = SecureStore.options(saved);
@@ -113,10 +116,18 @@ public class RemotePiPlugin extends Plugin {
     private synchronized void disconnectNow() {
         attempt.incrementAndGet(); desiredProfile = null; connecting = false;
         for (CompletableFuture<String> question : questions.values()) question.complete(null); questions.clear();
+        if (filePreviews != null) filePreviews.clear();
         if (transport != null) transport.disconnect(); if (tunnel != null) tunnel.disconnect();
         main.post(() -> notifyListeners("challenge", new JSObject().put("challenge", JSONObject.NULL), true)); updateState("idle", "连接已关闭，远端任务继续运行", null);
     }
     @PluginMethod public void disconnect(PluginCall call) { disconnectNow(); call.resolve(); }
+    @PluginMethod public void prepareFilePreview(PluginCall call) {
+        try {
+            FilePreviewCache.Download download = filePreviews.begin(transport, call.getString("id"), call.getString("path"), call.getInt("limit", 0));
+            run(call, () -> new JSObject().put("uri", android.net.Uri.fromFile(download.read()).toString()));
+        } catch (Exception error) { call.reject(error.getMessage()); }
+    }
+    @PluginMethod public void releaseFilePreview(PluginCall call) { filePreviews.release(call.getString("id", "")); call.resolve(); }
     @PluginMethod public void request(PluginCall call) {
         run(call, () -> {
             String method = call.getString("method", "GET"); Object body = call.getData().opt("body");
