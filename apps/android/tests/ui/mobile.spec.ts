@@ -409,11 +409,12 @@ test('chat distinguishes illustrative paths from real hidden files and explains 
   await fixture(page);
   await page.evaluate(() => {
     const w = window as any;
-    w.__fixture.answer = '示例 `.loopx/registry.json`；真实文件 `.config/settings.json`；[缺失文件](missing.txt)。';
+    w.__fixture.answer = '示例 `.loopx/registry.json`；已删除 `deleted.md`；真实文件 `.config/settings.json`；[缺失文件](missing.txt)。';
     const original = w.desktop.piRequest;
     w.desktop.piRequest = async (operation: string, input: any) => {
       if (operation === 'files.suggest') {
         w.__fixture.calls.push({ operation, input });
+        if (input.query === 'deleted.md') return input.mode === 'path' ? [] : [{ path: 'deleted.md', kind: 'tracked' }];
         // A fuzzy match must never become a link to a different file.
         return [{ path: '.config/settings.json', kind: 'other' }, { path: 'backup/.loopx/registry.json', kind: 'other' }];
       }
@@ -427,6 +428,8 @@ test('chat distinguishes illustrative paths from real hidden files and explains 
   await connect(page);
   await expect(page.getByRole('link', { name: '.config/settings.json', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: '.loopx/registry.json', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'deleted.md', exact: true })).toHaveCount(0);
+  await expect(page.locator('code').filter({ hasText: /^deleted\.md$/ })).toBeVisible();
   await expect(page.locator('code').filter({ hasText: /^\.loopx\/registry\.json$/ })).toBeVisible();
   await page.getByRole('link', { name: '.config/settings.json', exact: true }).tap();
   await expect(page.locator('pre.file-preview')).toHaveText('{"ready":true}');
@@ -439,8 +442,9 @@ test('chat distinguishes illustrative paths from real hidden files and explains 
   await expect(page.getByTestId('message-user').last()).toContainText('继续聊天');
   const queries = await page.evaluate(() => (window as any).__fixture.calls.filter((call: any) => call.operation === 'files.suggest').map((call: any) => call.input));
   expect(queries).toEqual([
-    { projectId: 'p1', workspaceId: 'w1', query: '.loopx/registry.json', scope: 'all' },
-    { projectId: 'p1', workspaceId: 'w1', query: '.config/settings.json', scope: 'all' },
+    { projectId: 'p1', workspaceId: 'w1', query: '.loopx/registry.json', scope: 'all', mode: 'path' },
+    { projectId: 'p1', workspaceId: 'w1', query: 'deleted.md', scope: 'all', mode: 'path' },
+    { projectId: 'p1', workspaceId: 'w1', query: '.config/settings.json', scope: 'all', mode: 'path' },
   ]);
 });
 

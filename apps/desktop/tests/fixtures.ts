@@ -38,6 +38,7 @@ export async function startFixture({ binaryFrames = false } = {}) {
   const completionDelay = new Map<string, number>();
   const previewFiles = new Map<string, Buffer>();
   const fileContents = new Map<string, string>();
+  const indexedOnlyFiles = new Set<string>();
   const queueMutationDelay = new Map<string, number>();
   const fileReadDelay = new Map<string, number>(); const fileReadErrors = new Set<string>();
   let terminalReadyDelay = 0;
@@ -120,7 +121,7 @@ export async function startFixture({ binaryFrames = false } = {}) {
         const directory = pathQuery.slice(0, pathQuery.lastIndexOf('/') + 1);
         const files = url.searchParams.get('mode') === 'path'
           ? entries.filter((file) => file.path !== directory && file.path.startsWith(directory) && !file.path.slice(directory.length).replace(/\/$/, '').includes('/') && file.path.toLowerCase().includes(pathQuery.toLowerCase()))
-          : entries.filter((file) => (file.kind !== 'untracked' || url.searchParams.get('scope') === 'all') && file.path.toLowerCase().includes(query.toLowerCase()));
+          : [...entries, ...Array.from(indexedOnlyFiles, (path) => ({ path, kind: 'tracked' }))].filter((file) => (file.kind !== 'untracked' || url.searchParams.get('scope') === 'all') && file.path.toLowerCase().includes(query.toLowerCase()));
         later(() => json(response, files), completionDelay.get(query) || 0);
       }
       else if (scope[3] === 'file/preview') {
@@ -263,7 +264,7 @@ export async function startFixture({ binaryFrames = false } = {}) {
     });
   });
   await new Promise<void>((resolve) => ssh.listen(0, '127.0.0.1', resolve));
-  return { sshPort: (ssh.address() as { port: number }).port, webPort, calls, sessions, setQueue, queueMutationDelay, snapshotDelay, completionDelay, previewFiles, fileContents, fileReadDelay, fileReadErrors, promptResponseDelay, askSubmitFailures, commandResults, commands, histories, emit, startWork, finishWork, ackDelay, catalogDelay,
+  return { sshPort: (ssh.address() as { port: number }).port, webPort, calls, sessions, indexedOnlyFiles, setQueue, queueMutationDelay, snapshotDelay, completionDelay, previewFiles, fileContents, fileReadDelay, fileReadErrors, promptResponseDelay, askSubmitFailures, commandResults, commands, histories, emit, startWork, finishWork, ackDelay, catalogDelay,
     delayTerminalReady(ms: number) { terminalReadyDelay = ms; },
     get environmentRuns() { return environmentRuns; },
     failEnvironmentRefresh(fail: boolean) { failEnvironmentRefresh = fail; },

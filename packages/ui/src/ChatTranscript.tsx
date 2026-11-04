@@ -31,7 +31,7 @@ type FileLinks = { onOpenFile?: (path: string) => void; onCheckFile?: (path: str
 const FileLinkContext = createContext<FileLinks>({});
 
 export function useFileReferenceChecker(projectId?: string, workspaceId?: string, workspacePath = '', directory = workspacePath) {
-  return useMemo(() => createFileReferenceChecker((query) => piRequest<{ path: string }[]>('files.suggest', { projectId, workspaceId, query, scope: 'all' }), workspacePath, directory), [projectId, workspaceId, workspacePath, directory]);
+  return useMemo(() => createFileReferenceChecker((query) => piRequest<{ path: string }[]>('files.suggest', { projectId, workspaceId, query, scope: 'all', mode: 'path' }), workspacePath, directory), [projectId, workspaceId, workspacePath, directory]);
 }
 
 const FileLink: Components['a'] = ({ href, children, node }) => {

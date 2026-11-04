@@ -1,3 +1,4 @@
+import { createFileReferenceChecker } from '../../../packages/ui/src/file-links';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CommandResult, FileSuggestion, PiOperation, SlashCommand } from '../src/shared/pi';
@@ -135,5 +136,23 @@ test('native queue removal preserves session scope, order and attachment metadat
     assert.deepEqual(requests[0]!.body, { cwd: session.cwd, action: 'remove', index: 0, expectedQueue });
     for (const index of [-1, 0.5, 2]) await assert.rejects(client.request('session.queue.remove', { ...session, index, expectedQueue }), /位置无效/);
     assert.equal(requests.length, 1);
+  } finally { client.disconnect(); }
+});
+
+
+test('native path-only existence checks reject deleted indexed basenames and preserve completion fallback', async () => {
+  const indexed = [{ path: 'deleted.md', kind: 'tracked' }];
+  const client = clientFor((request) => {
+    const params = url(request).searchParams;
+    if (params.get('mode') === 'file') return indexed;
+    return params.get('q') === 'README.md' ? [{ path: 'README.md', kind: 'other' }] : [];
+  });
+  const check = createFileReferenceChecker((query) => client.request('files.suggest', { ...scope, scope: 'all', query, mode: 'path' }) as Promise<{ path: string }[]>, '/srv/projects/remote-pi');
+  try {
+    assert.equal(await check('deleted.md'), false);
+    assert.deepEqual(requests.map((request) => url(request).searchParams.get('mode')), ['path']);
+    assert.equal(await check('README.md'), true);
+    assert.deepEqual(await client.request('files.suggest', { ...scope, query: 'deleted.md' }), indexed);
+    assert.equal(url(requests.at(-1)!).searchParams.get('mode'), 'file');
   } finally { client.disconnect(); }
 });

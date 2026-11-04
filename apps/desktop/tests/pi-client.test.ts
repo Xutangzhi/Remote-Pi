@@ -1,3 +1,4 @@
+import { createFileReferenceChecker } from '../../../packages/ui/src/file-links';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -226,5 +227,20 @@ test('queue removal sends the exact snapshot and refuses stale or invalid indice
     const previous = fixture.calls.length;
     for (const index of [-1, 0.5, 2]) await assert.rejects(client.request('session.queue.remove', { ...session, index, expectedQueue }), /位置无效/);
     assert.equal(fixture.calls.length, previous);
+  } finally { client.disconnect(); await fixture.close(); }
+});
+
+
+test('path-only existence checks reject deleted indexed basenames without disabling completion fallback', async () => {
+  const fixture = await startFixture(); const client = new PiClient(); client.connect(`http://127.0.0.1:${fixture.webPort}`);
+  const scope = { projectId: 'project-1', workspaceId: 'workspace-project-1', scope: 'all' };
+  fixture.indexedOnlyFiles.add('deleted.md');
+  const check = createFileReferenceChecker((query) => client.request('files.suggest', { ...scope, query, mode: 'path' }) as Promise<{ path: string }[]>, '/srv/projects/remote-pi');
+  try {
+    assert.equal(await check('deleted.md'), false);
+    assert.deepEqual(fixture.calls.filter((call) => call.path.endsWith('/files')).map((call) => call.query.mode), ['path']);
+    assert.equal(await check('README.md'), true);
+    assert.deepEqual(await client.request('files.suggest', { ...scope, query: 'deleted.md' }), [{ path: 'deleted.md', kind: 'tracked' }]);
+    assert.equal(fixture.calls.findLast((call) => call.path.endsWith('/files'))?.query.mode, 'file');
   } finally { client.disconnect(); await fixture.close(); }
 });

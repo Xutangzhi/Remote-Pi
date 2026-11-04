@@ -103,8 +103,8 @@ export class PiClient extends Events {
         const paths = (await this.http<FileSuggestion[]>(`${endpoint}?${params}`)).filter((file) => normalize(file.path).startsWith(pathPrefix));
         const exact = (path: string) => normalize(path).replace(/\/$/, '') === pathPrefix.replace(/\/$/, '');
         paths.sort((a, b) => Number(exact(b.path)) - Number(exact(a.path)) || Number(b.path.endsWith('/')) - Number(a.path.endsWith('/')));
-        // Explicit paths must never drift into similarly named cached copies.
-        if (paths.length || !query || /[/\\]/.test(query) || query.startsWith('~')) return paths;
+        // Existence checks use filesystem results only; completion may fall back to Git search.
+        if (input.mode === 'path' || paths.length || !query || /[/\\]/.test(query) || query.startsWith('~')) return paths;
         params.set('mode', 'file');
         return this.http(`${endpoint}?${params}`);
       }
