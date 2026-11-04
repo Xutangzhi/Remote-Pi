@@ -40,6 +40,13 @@ test('preview classification has explicit media types and limits', () => {
   assert.equal(filePreviewFormat('index.html'), undefined);
 });
 
+test('prototype property names are unsupported file extensions', () => {
+  for (const extension of Object.getOwnPropertyNames(Object.prototype)) {
+    assert.equal(filePreviewFormat(`file.${extension}`), undefined, extension);
+    assert.equal(filePreviewFormat(`file.${extension.toUpperCase()}`), undefined, extension);
+  }
+});
+
 test('binary preview uses the scoped download route and rejects oversized data and redirects', async () => {
   let mode = 'ok'; let requested = ''; let closed = false;
   const server = createServer((request, response) => {

@@ -14,9 +14,13 @@ test('chat file references open remote previews and recover after errors and nav
     '[失败文件](missing.txt)',
     '[延迟文件](slow.txt)',
     '[第二份报告](docs/second.md)',
+    '[原型同名文件](file.constructor)',
+    '[双下划线文件](file.__proto__)',
     '```text\nsrc/not-a-link.ts\n```',
   ].join('\n\n') }]);
   fixture.fileContents.set('docs/report.md', '# Remote Pi\n\n[相邻文档](./next.md)\n\n[上级文档](../README.md)');
+  fixture.fileContents.set('file.constructor', 'constructor 文件的文本内容');
+  fixture.fileContents.set('file.__proto__', '__proto__ 文件的文本内容');
   const dir = await mkdtemp(join(tmpdir(), 'remote-pi-file-links-'));
   const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), REMOTE_PI_TEST_MODE: '1', REMOTE_PI_USER_DATA: dir, REMOTE_PI_TEST_KNOWN_HOSTS: join(dir, 'known_hosts') };
   delete env.ELECTRON_RUN_AS_NODE;
@@ -34,6 +38,15 @@ test('chat file references open remote previews and recover after errors and nav
     await page.getByLabel('SSH 验证响应').fill(TEST_PASSWORD);
     await page.getByRole('button', { name: '继续连接', exact: true }).click();
     await expect(page.getByLabel('发送消息', { exact: true })).toBeEnabled();
+
+    for (const [name, content] of [['原型同名文件', 'constructor 文件的文本内容'], ['双下划线文件', '__proto__ 文件的文本内容']]) {
+      await page.getByRole('link', { name, exact: true }).click();
+      await expect(page.locator('pre.file-preview')).toHaveText(content!);
+    }
+    await page.getByLabel('发送消息', { exact: true }).fill('预览特殊文件后继续聊天');
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+    await expect(page.getByTestId('message-user').last()).toContainText('预览特殊文件后继续聊天');
+    await expect(page.getByTestId('message-assistant').last()).toContainText('已收到。这是通过真实 SSH 隧道传输的测试流式回复。');
 
     await page.getByRole('link', { name: '报告', exact: true }).click();
     await expect(page.locator('.file-back')).toHaveText('docs/report.md');

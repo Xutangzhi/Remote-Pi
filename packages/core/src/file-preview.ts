@@ -10,8 +10,9 @@ const formats: Record<string, [PreviewKind, string]> = {
   png: ['image', 'image/png'], jpg: ['image', 'image/jpeg'], jpeg: ['image', 'image/jpeg'], gif: ['image', 'image/gif'], webp: ['image', 'image/webp'], svg: ['image', 'image/svg+xml'], bmp: ['image', 'image/bmp'],
 };
 export function filePreviewFormat(path: string) {
-  const format = formats[path.split('.').at(-1)?.toLowerCase() || ''];
-  if (!format) return;
+  const extension = path.split('.').at(-1)?.toLowerCase() || '';
+  if (!Object.hasOwn(formats, extension)) return;
+  const format = formats[extension]!;
   const [kind, mime] = format;
   const limitMiB = kind === 'table' ? 10 : ['image', 'pdf', 'word', 'presentation', 'legacy-office'].includes(kind) ? 20 : 128;
   return { kind, mime, limit: limitMiB * 1024 * 1024, limitMiB };
