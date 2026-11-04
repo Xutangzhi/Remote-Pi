@@ -1,3 +1,4 @@
+import { createFileReferenceChecker } from '../../../packages/ui/src/file-links';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -211,4 +212,35 @@ test('session media cancels an invalid MIME response without consuming its body'
     await until(() => fixture.closed);
     assert.ok(fixture.sent <= 1024 * 1024, 'an invalid response must be cancelled after headers instead of waiting for garbage collection');
   } finally { await fixture.close(); }
+});
+
+test('queue removal sends the exact snapshot and refuses stale or invalid indices', async () => {
+  const fixture = await startFixture(); const client = new PiClient(); client.connect(`http://127.0.0.1:${fixture.webPort}`);
+  const session = { id: 'session-1', cwd: '/srv/projects/remote-pi' };
+  const expectedQueue = [{ kind: 'steer' as const, text: 'same' }, { kind: 'followUp' as const, text: 'same', hasAttachments: true, attachmentCount: 1 }];
+  fixture.setQueue(session.id, expectedQueue);
+  try {
+    const next = await client.request('session.queue.remove', { ...session, index: 0, expectedQueue }) as import('../src/shared/pi').SessionStatus;
+    assert.deepEqual(next.queuedMessages, expectedQueue.slice(1));
+    assert.deepEqual(fixture.calls.find((call) => call.path.endsWith('/queue/message'))?.body, { cwd: session.cwd, action: 'remove', index: 0, expectedQueue });
+    await assert.rejects(client.request('session.queue.remove', { ...session, index: 0, expectedQueue }), /Queued messages changed/);
+    const previous = fixture.calls.length;
+    for (const index of [-1, 0.5, 2]) await assert.rejects(client.request('session.queue.remove', { ...session, index, expectedQueue }), /位置无效/);
+    assert.equal(fixture.calls.length, previous);
+  } finally { client.disconnect(); await fixture.close(); }
+});
+
+
+test('path-only existence checks reject deleted indexed basenames without disabling completion fallback', async () => {
+  const fixture = await startFixture(); const client = new PiClient(); client.connect(`http://127.0.0.1:${fixture.webPort}`);
+  const scope = { projectId: 'project-1', workspaceId: 'workspace-project-1', scope: 'all' };
+  fixture.indexedOnlyFiles.add('deleted.md');
+  const check = createFileReferenceChecker((query) => client.request('files.suggest', { ...scope, query, mode: 'path' }) as Promise<{ path: string }[]>, '/srv/projects/remote-pi');
+  try {
+    assert.equal(await check('deleted.md'), false);
+    assert.deepEqual(fixture.calls.filter((call) => call.path.endsWith('/files')).map((call) => call.query.mode), ['path']);
+    assert.equal(await check('README.md'), true);
+    assert.deepEqual(await client.request('files.suggest', { ...scope, query: 'deleted.md' }), [{ path: 'deleted.md', kind: 'tracked' }]);
+    assert.equal(fixture.calls.findLast((call) => call.path.endsWith('/files'))?.query.mode, 'file');
+  } finally { client.disconnect(); await fixture.close(); }
 });

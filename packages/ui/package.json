@@ -12,6 +12,7 @@
     "./api": "./src/api.ts",
     "./styles.css": "./src/styles.css",
     "./tokens.css": "./src/tokens.css",
+    "./QueuedMessages": "./src/QueuedMessages.tsx",
     "./FilePreview": "./src/FilePreview.tsx"
   },
   "dependencies": {

@@ -6,9 +6,11 @@ import { startFixture, TEST_PASSWORD } from '../fixtures';
 
 test('chat file references open remote previews and recover after errors and navigation', async () => {
   const fixture = await startFixture();
+  fixture.indexedOnlyFiles.add('deleted.md');
   fixture.histories.set('session-1', [{ entryId: 'files', role: 'assistant', content: [
     '[报告](/srv/projects/remote-pi/docs/report.md:12)',
-    '`src/main.ts`',
+    '`src/main.ts`、`README.md`、`deleted.md`',
+    '示例路径 `.loopx/registry.json`，真实隐藏文件 `.config/settings.json`。',
     '[带空格的文件](docs/my%20file.txt#L3)',
     '[文件 URL](file:///srv/projects/remote-pi/README.md)',
     '[失败文件](missing.txt)',
@@ -19,6 +21,8 @@ test('chat file references open remote previews and recover after errors and nav
     '```text\nsrc/not-a-link.ts\n```',
   ].join('\n\n') }]);
   fixture.fileContents.set('docs/report.md', '# Remote Pi\n\n[相邻文档](./next.md)\n\n[上级文档](../README.md)');
+  fixture.fileContents.set('src/main.ts', 'export const ready = true;');
+  fixture.fileContents.set('.config/settings.json', '{"ready":true}');
   fixture.fileContents.set('file.constructor', 'constructor 文件的文本内容');
   fixture.fileContents.set('file.__proto__', '__proto__ 文件的文本内容');
   const dir = await mkdtemp(join(tmpdir(), 'remote-pi-file-links-'));
@@ -38,6 +42,16 @@ test('chat file references open remote previews and recover after errors and nav
     await page.getByLabel('SSH 验证响应').fill(TEST_PASSWORD);
     await page.getByRole('button', { name: '继续连接', exact: true }).click();
     await expect(page.getByLabel('发送消息', { exact: true })).toBeEnabled();
+
+    await expect(page.getByRole('link', { name: 'src/main.ts', exact: true })).toBeVisible();
+    await expect.poll(() => fixture.calls.filter((call) => call.path.endsWith('/files') && call.query.q === '.loopx/registry.json').length).toBeGreaterThan(0);
+    await expect(page.getByRole('link', { name: '.loopx/registry.json', exact: true })).toHaveCount(0);
+    await expect(page.locator('code').filter({ hasText: /^\.loopx\/registry\.json$/ })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'README.md', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'deleted.md', exact: true })).toHaveCount(0);
+    await expect(page.locator('code').filter({ hasText: /^deleted\.md$/ })).toBeVisible();
+    await page.getByRole('link', { name: '.config/settings.json', exact: true }).click();
+    await expect(page.locator('pre.file-preview')).toHaveText('{"ready":true}');
 
     for (const [name, content] of [['原型同名文件', 'constructor 文件的文本内容'], ['双下划线文件', '__proto__ 文件的文本内容']]) {
       await page.getByRole('link', { name, exact: true }).click();
@@ -74,7 +88,8 @@ test('chat file references open remote previews and recover after errors and nav
 
     fixture.fileReadErrors.add('missing.txt');
     await page.getByRole('link', { name: '失败文件', exact: true }).click();
-    await expect(page.locator('.panel-error')).toContainText('missing.txt');
+    await expect(page.locator('.panel-error')).toContainText('/srv/projects/remote-pi/missing.txt：文件不存在');
+    await expect(page.locator('.panel-error')).not.toContainText('Error invoking remote method');
     await expect(page.locator('.file-preview')).toHaveCount(0);
     await page.getByRole('link', { name: '报告', exact: true }).click();
     await expect(page.locator('.file-preview')).toBeVisible();
@@ -91,6 +106,7 @@ test('chat file references open remote previews and recover after errors and nav
     await expect(page.locator('.file-preview')).toHaveCount(0);
     await page.getByRole('link', { name: '第二份报告', exact: true }).click();
     await expect(page.locator('.file-back')).toHaveText('docs/second.md');
+    expect(fixture.calls.filter((call) => call.path.endsWith('/files') && call.query.q === 'deleted.md').map((call) => call.query.mode)).toEqual(['path']);
     await page.locator('li[data-session-id="session-3"] > .conversation-tree-row > .conversation-row').click();
     await expect(page.locator('.file-preview')).toHaveCount(0);
     if (env.REMOTE_PI_TEST_SHOW_WINDOWS !== '1') expect(await backgroundWindowState()).toEqual([{ visible: false, focusable: false, focused: false }]);

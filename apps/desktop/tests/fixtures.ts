@@ -38,6 +38,8 @@ export async function startFixture({ binaryFrames = false } = {}) {
   const completionDelay = new Map<string, number>();
   const previewFiles = new Map<string, Buffer>();
   const fileContents = new Map<string, string>();
+  const indexedOnlyFiles = new Set<string>();
+  const queueMutationDelay = new Map<string, number>();
   const fileReadDelay = new Map<string, number>(); const fileReadErrors = new Set<string>();
   let terminalReadyDelay = 0;
   const promptResponseDelay = new Map<string, number>();
@@ -61,6 +63,10 @@ export async function startFixture({ binaryFrames = false } = {}) {
   const ackDelay = new Map<string, number>(); const catalogDelay = new Map<string, number>();
   const machineSnapshot = (): MachineStatusSnapshot => ({ epochId: 'fixture-machine', revision: machineRevision, sessions: Object.fromEntries(sessions.map((session) => [session.id, { 'core:working': Boolean(status(session.id).isStreaming || status(session.id).isCompacting || status(session.id).isBashRunning || status(session.id).pendingMessageCount), 'core:unread': unread.sessions.some((item) => item.sessionId === session.id && item.cwd === session.cwd) }])) });
   const publishMachine = () => { machineRevision++; broadcast('catalog', { type: 'machine.status', status: machineSnapshot() }); };
+  const setQueue = (id: string, messages: NonNullable<SessionStatus['queuedMessages']>) => {
+    status(id).queuedMessages = messages; status(id).pendingMessageCount = messages.length;
+    emit(id, { type: 'status.update', status: status(id) });
+  };
   const startWork = (id: string) => { status(id).isStreaming = true; emit(id, { type: 'status.update', status: status(id) }); broadcast('catalog', { type: 'status.update', status: status(id) }); publishMachine(); };
   const finishWork = (id: string) => {
     const session = sessions.find((item) => item.id === id)!; status(id).isStreaming = false;
@@ -109,12 +115,13 @@ export async function startFixture({ binaryFrames = false } = {}) {
           { path: 'README.md', kind: 'tracked' }, { path: 'src/', kind: 'tracked' }, { path: 'docs/', kind: 'other' }, { path: 'docs/my file.md', kind: 'tracked' },
           { path: 'repos/', kind: 'other' }, { path: 'repos/jbsdiff-backup/', kind: 'other' }, { path: 'repos/jbsdiff/', kind: 'other' }, { path: 'repos/jbsdiff/src/', kind: 'other' }, { path: 'repos/jbsdiff/pom.xml', kind: 'other' },
           { path: 'local notes.txt', kind: 'untracked' },
+          ...Array.from(fileContents.keys(), (path) => ({ path, kind: 'other' })),
         ];
         const pathQuery = query.replace(/^\.\//, '');
         const directory = pathQuery.slice(0, pathQuery.lastIndexOf('/') + 1);
         const files = url.searchParams.get('mode') === 'path'
           ? entries.filter((file) => file.path !== directory && file.path.startsWith(directory) && !file.path.slice(directory.length).replace(/\/$/, '').includes('/') && file.path.toLowerCase().includes(pathQuery.toLowerCase()))
-          : entries.filter((file) => (file.kind !== 'untracked' || url.searchParams.get('scope') === 'all') && file.path.toLowerCase().includes(query.toLowerCase()));
+          : [...entries, ...Array.from(indexedOnlyFiles, (path) => ({ path, kind: 'tracked' }))].filter((file) => (file.kind !== 'untracked' || url.searchParams.get('scope') === 'all') && file.path.toLowerCase().includes(query.toLowerCase()));
         later(() => json(response, files), completionDelay.get(query) || 0);
       }
       else if (scope[3] === 'file/preview') {
@@ -124,7 +131,7 @@ export async function startFixture({ binaryFrames = false } = {}) {
       }
       else if (scope[3] === 'file') {
         const filePath = url.searchParams.get('path') || ''; const fail = fileReadErrors.has(filePath);
-        later(() => fail ? json(response, { error: 'Delayed file read failed' }, 500) : json(response, { path: filePath, content: fileContents.get(filePath) ?? '# Remote Pi\n\nA native desktop workspace.\n', binary: false, truncated: false }), fileReadDelay.get(filePath) || 0);
+        later(() => fail ? json(response, { error: 'Path does not exist' }, 404) : json(response, { path: filePath, content: fileContents.get(filePath) ?? '# Remote Pi\n\nA native desktop workspace.\n', binary: false, truncated: false }), fileReadDelay.get(filePath) || 0);
       }
       else json(response, { error: 'No route' }, 404); return;
     }
@@ -178,6 +185,14 @@ export async function startFixture({ binaryFrames = false } = {}) {
       else if (endpoint === 'tree/navigate') json(response, body.expectedLeafId === 'a1' ? { cancelled: false, editorText: 'Restored tree draft' } : { error: 'Stale tree' }, body.expectedLeafId === 'a1' ? 200 : 409);
       else if (endpoint === 'shell') { emit(id, { type: 'shell.start', command: body.text }); emit(id, { type: 'shell.end', output: 'Fixture shell output', exitCode: 0 }); json(response, { accepted: true }); }
       else if (endpoint === 'archive' || endpoint === 'restore') { session.archived = endpoint === 'archive'; json(response, { archived: session.archived }); }
+      else if (endpoint === 'queue/message') {
+        later(() => {
+          const queue = status(id).queuedMessages || [];
+          if (body.action !== 'remove' || JSON.stringify(queue) !== JSON.stringify(body.expectedQueue) || !queue[body.index]) { json(response, { error: 'Queued messages changed; refresh the queue and try again' }, 409); return; }
+          setQueue(id, queue.filter((_, index) => index !== body.index));
+          json(response, status(id));
+        }, queueMutationDelay.get(id) || 0);
+      }
       else if (endpoint === 'abort') { finishWork(id); json(response, { ok: true }); }
       else if (endpoint === 'prompt') {
         const history = histories.get(id) || []; histories.set(id, history); const turn = randomUUID();
@@ -249,7 +264,7 @@ export async function startFixture({ binaryFrames = false } = {}) {
     });
   });
   await new Promise<void>((resolve) => ssh.listen(0, '127.0.0.1', resolve));
-  return { sshPort: (ssh.address() as { port: number }).port, webPort, calls, sessions, snapshotDelay, completionDelay, previewFiles, fileContents, fileReadDelay, fileReadErrors, promptResponseDelay, askSubmitFailures, commandResults, commands, histories, emit, startWork, finishWork, ackDelay, catalogDelay,
+  return { sshPort: (ssh.address() as { port: number }).port, webPort, calls, sessions, indexedOnlyFiles, setQueue, queueMutationDelay, snapshotDelay, completionDelay, previewFiles, fileContents, fileReadDelay, fileReadErrors, promptResponseDelay, askSubmitFailures, commandResults, commands, histories, emit, startWork, finishWork, ackDelay, catalogDelay,
     delayTerminalReady(ms: number) { terminalReadyDelay = ms; },
     get environmentRuns() { return environmentRuns; },
     failEnvironmentRefresh(fail: boolean) { failEnvironmentRefresh = fail; },

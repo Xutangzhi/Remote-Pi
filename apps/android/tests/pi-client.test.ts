@@ -1,3 +1,4 @@
+import { createFileReferenceChecker } from '../../../packages/ui/src/file-links';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CommandResult, FileSuggestion, PiOperation, SlashCommand } from '../src/shared/pi';
@@ -123,5 +124,35 @@ test('a long command response cannot cross a disconnected native connection', as
     client.disconnect();
     finish({ type: 'done', promptDraft: 'Old connection result' });
     await assert.rejects(pending, /请求已取消/);
+  } finally { client.disconnect(); }
+});
+
+test('native queue removal preserves session scope, order and attachment metadata', async () => {
+  const expectedQueue = [{ kind: 'steer', text: 'same' }, { kind: 'followUp', text: 'same', hasAttachments: true, attachmentCount: 2 }];
+  const client = clientFor(() => ({ queuedMessages: expectedQueue.slice(1) }));
+  try {
+    assert.deepEqual(await client.request('session.queue.remove', { ...session, index: 0, expectedQueue }), { queuedMessages: expectedQueue.slice(1) });
+    assert.equal(url(requests[0]!).pathname, '/api/machines/local/sessions/session%20%2F%E4%B8%80/queue/message');
+    assert.deepEqual(requests[0]!.body, { cwd: session.cwd, action: 'remove', index: 0, expectedQueue });
+    for (const index of [-1, 0.5, 2]) await assert.rejects(client.request('session.queue.remove', { ...session, index, expectedQueue }), /位置无效/);
+    assert.equal(requests.length, 1);
+  } finally { client.disconnect(); }
+});
+
+
+test('native path-only existence checks reject deleted indexed basenames and preserve completion fallback', async () => {
+  const indexed = [{ path: 'deleted.md', kind: 'tracked' }];
+  const client = clientFor((request) => {
+    const params = url(request).searchParams;
+    if (params.get('mode') === 'file') return indexed;
+    return params.get('q') === 'README.md' ? [{ path: 'README.md', kind: 'other' }] : [];
+  });
+  const check = createFileReferenceChecker((query) => client.request('files.suggest', { ...scope, scope: 'all', query, mode: 'path' }) as Promise<{ path: string }[]>, '/srv/projects/remote-pi');
+  try {
+    assert.equal(await check('deleted.md'), false);
+    assert.deepEqual(requests.map((request) => url(request).searchParams.get('mode')), ['path']);
+    assert.equal(await check('README.md'), true);
+    assert.deepEqual(await client.request('files.suggest', { ...scope, query: 'deleted.md' }), indexed);
+    assert.equal(url(requests.at(-1)!).searchParams.get('mode'), 'file');
   } finally { client.disconnect(); }
 });
