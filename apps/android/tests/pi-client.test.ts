@@ -125,3 +125,15 @@ test('a long command response cannot cross a disconnected native connection', as
     await assert.rejects(pending, /请求已取消/);
   } finally { client.disconnect(); }
 });
+
+test('native queue removal preserves session scope, order and attachment metadata', async () => {
+  const expectedQueue = [{ kind: 'steer', text: 'same' }, { kind: 'followUp', text: 'same', hasAttachments: true, attachmentCount: 2 }];
+  const client = clientFor(() => ({ queuedMessages: expectedQueue.slice(1) }));
+  try {
+    assert.deepEqual(await client.request('session.queue.remove', { ...session, index: 0, expectedQueue }), { queuedMessages: expectedQueue.slice(1) });
+    assert.equal(url(requests[0]!).pathname, '/api/machines/local/sessions/session%20%2F%E4%B8%80/queue/message');
+    assert.deepEqual(requests[0]!.body, { cwd: session.cwd, action: 'remove', index: 0, expectedQueue });
+    for (const index of [-1, 0.5, 2]) await assert.rejects(client.request('session.queue.remove', { ...session, index, expectedQueue }), /位置无效/);
+    assert.equal(requests.length, 1);
+  } finally { client.disconnect(); }
+});

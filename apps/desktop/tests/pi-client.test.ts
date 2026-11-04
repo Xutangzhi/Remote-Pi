@@ -212,3 +212,19 @@ test('session media cancels an invalid MIME response without consuming its body'
     assert.ok(fixture.sent <= 1024 * 1024, 'an invalid response must be cancelled after headers instead of waiting for garbage collection');
   } finally { await fixture.close(); }
 });
+
+test('queue removal sends the exact snapshot and refuses stale or invalid indices', async () => {
+  const fixture = await startFixture(); const client = new PiClient(); client.connect(`http://127.0.0.1:${fixture.webPort}`);
+  const session = { id: 'session-1', cwd: '/srv/projects/remote-pi' };
+  const expectedQueue = [{ kind: 'steer' as const, text: 'same' }, { kind: 'followUp' as const, text: 'same', hasAttachments: true, attachmentCount: 1 }];
+  fixture.setQueue(session.id, expectedQueue);
+  try {
+    const next = await client.request('session.queue.remove', { ...session, index: 0, expectedQueue }) as import('../src/shared/pi').SessionStatus;
+    assert.deepEqual(next.queuedMessages, expectedQueue.slice(1));
+    assert.deepEqual(fixture.calls.find((call) => call.path.endsWith('/queue/message'))?.body, { cwd: session.cwd, action: 'remove', index: 0, expectedQueue });
+    await assert.rejects(client.request('session.queue.remove', { ...session, index: 0, expectedQueue }), /Queued messages changed/);
+    const previous = fixture.calls.length;
+    for (const index of [-1, 0.5, 2]) await assert.rejects(client.request('session.queue.remove', { ...session, index, expectedQueue }), /位置无效/);
+    assert.equal(fixture.calls.length, previous);
+  } finally { client.disconnect(); await fixture.close(); }
+});

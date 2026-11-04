@@ -4,7 +4,8 @@ import type { Attachment, CommandResult, ExtensionDialog, MessagePage, Model, Pr
 import type { ServerProfile, Theme } from '../../shared/types';
 import { isWorking, piRequest, sessionInput, sessionKey, sessionTitle } from './api';
 import { applyEvent, fromSnapshot, prependHistory, type TranscriptState } from './transcript';
-import { Transcript, remoteFilePath } from './ChatTranscript';
+import { useFileReferenceChecker, Transcript, remoteFilePath } from './ChatTranscript';
+import { QueuedMessages } from '@remote-pi/ui/QueuedMessages';
 import { Inspector, type Panel } from './Inspector';
 import { ResizeHandle } from './ResizeHandle';
 import { useDialogFocus } from './useDialogFocus';
@@ -20,7 +21,7 @@ type Selection = { project: Project; workspace: RemoteWorkspace; session: Sessio
 type PaneSizes = Partial<Record<'left' | 'right' | 'bottom', number>>;
 const paneSizesKey = 'remote-pi.pane-sizes';
 const clampSize = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-type Draft = { text: string; attachments: Attachment[] };
+type Draft = { text: string; attachments: Attachment[]; streamingBehavior?: 'steer' | 'followUp' };
 const drafts = new Map<string, Draft>();
 const lastSessions = new Map<string, string>();
 const inputHistories = new Map<string, string[]>();
@@ -81,6 +82,7 @@ export function Workspace({ profile, theme, onManage, onTheme, onDisconnect }: {
   const [models, setModels] = useState<Model[]>([]);
   const [levels, setLevels] = useState<string[]>([]);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
+  const [queuePendingKeys, setQueuePendingKeys] = useState<Set<string>>(new Set());
   const [sendingKeys, setSendingKeys] = useState<Set<string>>(new Set());
   const [behavior, setBehavior] = useState('followUp');
   const [nearBottom, setNearBottom] = useState(true);
@@ -99,6 +101,7 @@ export function Workspace({ profile, theme, onManage, onTheme, onDisconnect }: {
   const draftKey = selection ? `${profile?.id}:${sessionKey(selection.session)}` : '';
   const activeKey = selection ? sessionKey(selection.session) : '';
   const sending = sendingKeys.has(draftKey);
+  const queuePending = queuePendingKeys.has(draftKey);
   const working = isWorking(status);
   const sidebarActivity = indicators.unreadKeys.size ? 'unread' : (indicators.running?.size || (!indicators.running && working)) ? 'running' : undefined;
   const sidebarDot = sidebarActivity && <span className={`sidebar-status-dot session-status-dot ${sidebarActivity}`} role="img" aria-label={sidebarActivity === 'unread' ? '有已完成未读对话' : '有对话正在执行'} />;
@@ -252,7 +255,7 @@ export function Workspace({ profile, theme, onManage, onTheme, onDisconnect }: {
     void refresh();
   };
   const send = async () => {
-    if (!selection || sending || stream !== 'live' || (!draft.text.trim() && !draft.attachments.length)) return;
+    if (!selection || sending || queuePending || stream !== 'live' || (!draft.text.trim() && !draft.attachments.length)) return;
     const current = selection; const key = draftKey; const submitted = draft; const submitFocus = document.activeElement;
     const history = inputHistories.get(key) || previousInputs(transcript);
     setSendingKeys((previous) => new Set(previous).add(key)); setError(''); setCommand(undefined);
@@ -270,7 +273,7 @@ export function Workspace({ profile, theme, onManage, onTheme, onDisconnect }: {
           applyCommandResult(current, result, text === '/reload');
         }
       } else if (!submitted.attachments.length && text.startsWith('!')) await piRequest('session.shell', { ...sessionInput(current.session), text });
-      else await piRequest('session.prompt', { ...sessionInput(current.session), text: submitted.text, ...(submitted.attachments.length ? { attachments: submitted.attachments } : {}), ...(working ? { streamingBehavior: behavior } : {}) });
+      else await piRequest('session.prompt', { ...sessionInput(current.session), text: submitted.text, ...(submitted.attachments.length ? { attachments: submitted.attachments } : {}), ...(working ? { streamingBehavior: submitted.streamingBehavior || behavior } : {}) });
       if (submitted.text.trim() && history.at(-1) !== submitted.text) inputHistories.set(key, [...history, submitted.text]);
       // A command can restore a draft, or image reads can finish while sending.
       // Only consume the exact draft that this request submitted.
@@ -312,6 +315,7 @@ export function Workspace({ profile, theme, onManage, onTheme, onDisconnect }: {
     catch (reason) { report(reason); }
   };
   const newSession = (projectId?: string) => { if (phone) setSidebar(false); setNewProjectId(projectId || selection?.project.id || groups[0]?.project.id || ''); setDialog(groups.length ? 'session' : 'project'); };
+  const checkFile = useFileReferenceChecker(selection?.project.id, selection?.workspace.id, selection?.workspace.path, selection?.session.cwd);
   const openFile = (href: string) => {
     if (!selection) return;
     try {
@@ -357,19 +361,25 @@ export function Workspace({ profile, theme, onManage, onTheme, onDisconnect }: {
         <div className="conversation-intro"><span><MessageSquare size={14} />{selection.workspace.path}</span><h1>{sessionTitle(selection.session)}</h1></div>
         {start > 0 && <button className="load-history" disabled={olderLoading} onClick={() => void loadOlder()}>{olderLoading ? '加载中…' : '加载更早的消息'}</button>}
         {stream === 'connecting' && !transcript.items.length ? <div className="transcript-loading"><span className="spinner" />正在读取对话…</div> : !transcript.items.length && stream === 'live' ? <div className="empty-conversation"><span className="pi-glyph">π</span><h2>从一个想法开始。</h2><p>描述你想完成的工作，Pi 会在此目录中执行。</p></div> : null}
-        <Transcript items={transcript.items} session={selection.session} onError={report} onOpenFile={openFile} />
+        <Transcript items={transcript.items} session={selection.session} onError={report} onOpenFile={openFile} onCheckFile={checkFile} />
         {working && <div className="working-status"><span className="spinner" />{status?.isCompacting ? '正在整理上下文' : status?.isBashRunning ? '正在执行命令' : 'Pi 正在工作'}<span>远端运行中</span></div>}
       </div></div>
       <div className="composer-region">{!nearBottom && <button className="jump-bottom" aria-label="回到底部" onClick={jumpToBottom}><ArrowDown size={16} /></button>}{stream !== 'live' && <div className={`stream-notice ${stream === 'error' ? 'stream-error' : ''}`}>{stream === 'error' ? '对话连接失败' : stream === 'reconnecting' ? '连接中断，正在恢复对话…' : '正在连接会话…'}{stream === 'error' && <button onClick={() => { setError(''); setRetry((value) => value + 1); }}>重新连接</button>}</div>}
         {commandNotice?.key === activeKey && <div className="command-notice" role="status"><span>{commandNotice.message}</span><button className="icon-button" aria-label="关闭命令结果" onClick={() => setCommandNotice(undefined)}><X size={14} /></button></div>}
         {status?.warnings?.map((warning, index) => <div className="session-warning" key={index}>{warning.message}</div>)}
         {status?.pendingDialogs?.[0] && <ExtensionPrompt key={status.pendingDialogs[0].dialogId} dialog={status.pendingDialogs[0]} session={selection.session} onError={report} />}
-        {status?.queuedMessages?.length ? <div className="queued-messages">{status.queuedMessages.map((message, index) => <span key={index}>{message.kind === 'steering' ? '引导' : '排队'}：{message.text}</span>)}</div> : null}
+        {status && <QueuedMessages key={draftKey} session={selection.session} status={status} disabled={sending || queuePending || stream !== 'live'} hasDraft={Boolean(draft.text || draft.attachments.length)}
+          onPending={(pending) => setQueuePendingKeys((previous) => { const next = new Set(previous); if (pending) next.add(draftKey); else next.delete(draftKey); return next; })}
+          onUpdate={(next) => { if (selectionRef.current && sessionKey(selectionRef.current.session) === activeKey) setStatus((previous) => previous === status ? next : previous); }}
+          onRecall={(message) => {
+            const restored = { ...getDraft(draftKey), text: message.text, streamingBehavior: message.kind }; storeDraft(draftKey, restored);
+            if (selectionRef.current && sessionKey(selectionRef.current.session) === activeKey) { setDraft(restored); setBehavior(message.kind); }
+          }} />}
         {selection.session.archived ? <div className="archived-notice"><Archive size={16} />此对话已归档<button onClick={() => void archiveSession()}>恢复对话</button></div> : <div className="composer" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void readImages(Array.from(event.dataTransfer.files)); }}>
           {draft.attachments.length > 0 && <div className="draft-images">{draft.attachments.map((image, index) => <div key={index}><img src={`data:${image.mimeType};base64,${image.data}`} alt={image.name || '附件'} /><button aria-label={`移除附件 ${index + 1}`} onClick={() => editDraft({ ...draft, attachments: draft.attachments.filter((_, at) => at !== index) })}><X size={12} /></button></div>)}</div>}
-          <PromptInput key={draftKey} inputRef={textarea} session={selection.session} projectId={selection.project.id} workspaceId={selection.workspace.id} models={models} history={inputHistories.get(draftKey) || previousInputs(transcript)} value={draft.text} connected={stream === 'live'} disabled={sending} onChange={(text) => editDraft({ ...draft, text })} onSend={() => void send()} onPaste={(event) => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); void readImages(files); } }} />
-          <div className="composer-toolbar"><input ref={attachmentInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={(event) => { void readImages(Array.from(event.target.files || [])); event.target.value = ''; }} /><button className="icon-button" aria-label="添加图片" title="添加图片" onClick={() => attachmentInput.current?.click()}><ImagePlus size={17} /></button><select aria-label="模型" value={selectedModel} disabled={working || !models.length || stream !== 'live'} onChange={(event) => { const [provider, modelId] = event.target.value.split('\0'); void changeSessionSetting('session.model', { provider, modelId }); }}><option value="" disabled>选择模型</option>{allModels.map((model) => <option key={`${model.provider}:${model.id}`} value={`${model.provider}\0${model.id}`}>{model.name || model.id} · {model.provider}</option>)}</select>{levels.length > 0 && <select className="thinking-select" aria-label="思考强度" value={status?.thinkingLevel || levels[0]} disabled={working || stream !== 'live'} onChange={(event) => void changeSessionSetting('session.thinking', { level: event.target.value })}>{levels.map((level) => <option key={level} value={level}>{thinkingLabels[level] || level}</option>)}</select>}
-            <div className="composer-send-actions">{working && <><select aria-label="发送方式" value={behavior} onChange={(event) => setBehavior(event.target.value)}><option value="followUp">排队发送</option><option value="steer">立即引导</option></select><button className="stop-button" aria-label="停止任务" title="停止任务" onClick={() => void piRequest('session.abort', sessionInput(selection.session)).catch(report)}><Square size={12} fill="currentColor" /></button></>}<button className="send-button" aria-label="发送" title="发送消息" disabled={sending || stream !== 'live' || (!draft.text.trim() && !draft.attachments.length)} onClick={() => void send()}>{sending ? <span className="spinner" /> : <ArrowUp size={19} />}</button></div>
+          <PromptInput key={draftKey} inputRef={textarea} session={selection.session} projectId={selection.project.id} workspaceId={selection.workspace.id} models={models} history={inputHistories.get(draftKey) || previousInputs(transcript)} value={draft.text} connected={stream === 'live'} disabled={sending || queuePending} onChange={(text) => editDraft({ ...draft, text })} onSend={() => void send()} onPaste={(event) => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); void readImages(files); } }} />
+          <div className="composer-toolbar"><input ref={attachmentInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={(event) => { void readImages(Array.from(event.target.files || [])); event.target.value = ''; }} /><button className="icon-button" aria-label="添加图片" disabled={queuePending} title="添加图片" onClick={() => attachmentInput.current?.click()}><ImagePlus size={17} /></button><select aria-label="模型" value={selectedModel} disabled={working || !models.length || stream !== 'live'} onChange={(event) => { const [provider, modelId] = event.target.value.split('\0'); void changeSessionSetting('session.model', { provider, modelId }); }}><option value="" disabled>选择模型</option>{allModels.map((model) => <option key={`${model.provider}:${model.id}`} value={`${model.provider}\0${model.id}`}>{model.name || model.id} · {model.provider}</option>)}</select>{levels.length > 0 && <select className="thinking-select" aria-label="思考强度" value={status?.thinkingLevel || levels[0]} disabled={working || stream !== 'live'} onChange={(event) => void changeSessionSetting('session.thinking', { level: event.target.value })}>{levels.map((level) => <option key={level} value={level}>{thinkingLabels[level] || level}</option>)}</select>}
+            <div className="composer-send-actions">{working && <><select aria-label="发送方式" value={draft.streamingBehavior || behavior} onChange={(event) => { setBehavior(event.target.value); editDraft({ ...draft, streamingBehavior: event.target.value as 'steer' | 'followUp' }); }}><option value="followUp">排队发送</option><option value="steer">立即引导</option></select><button className="stop-button" aria-label="停止任务" title="停止任务" onClick={() => void piRequest('session.abort', sessionInput(selection.session)).catch(report)}><Square size={12} fill="currentColor" /></button></>}<button className="send-button" aria-label="发送" title="发送消息" disabled={sending || queuePending || stream !== 'live' || (!draft.text.trim() && !draft.attachments.length)} onClick={() => void send()}>{sending ? <span className="spinner" /> : <ArrowUp size={19} />}</button></div>
           </div></div>}
         <div className="composer-footnote"><span><span className="online-dot" />SSH 已连接 · 远端执行</span><span>{status?.contextUsage?.percent != null ? `上下文 ${Math.round(status.contextUsage.percent)}% · ` : ''}{status?.cost ? `$${status.cost.toFixed(3)} · ` : ''}Enter 换行 · Ctrl/⌘ Enter 发送</span></div>
       </div></> : <div className="workspace-welcome"><span className="welcome-symbol">π</span><span className="eyebrow">REMOTE PI WORKSPACE</span><h1>让想法，成为进展。</h1><p>选择左侧的对话继续工作，<br />或从服务器上的一个目录开始。</p><div><button className="button primary" onClick={() => newSession()}><Plus size={16} />新建对话</button><button className="button secondary" onClick={() => setDialog('project')}><FolderPlus size={16} />添加项目</button></div><small><span className="online-dot" />已连接 {profile?.name}</small></div>}

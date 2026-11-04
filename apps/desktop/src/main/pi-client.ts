@@ -155,6 +155,10 @@ export class PiClient extends EventEmitter {
         if (prompt.length > 1_000_000 || (!prompt.trim() && !Array.isArray(input.attachments))) throw new Error('请输入消息。');
         return post('prompt', { text: prompt, ...(input.streamingBehavior === 'followUp' || input.streamingBehavior === 'steer' ? { streamingBehavior: input.streamingBehavior } : {}), ...(Array.isArray(input.attachments) ? { attachments: input.attachments } : {}) });
       }
+      case 'session.queue.remove': {
+        if (!Number.isSafeInteger(input.index) || Number(input.index) < 0 || !Array.isArray(input.expectedQueue) || Number(input.index) >= input.expectedQueue.length) throw new Error('排队消息位置无效。');
+        return post('queue/message', { action: 'remove', index: input.index, expectedQueue: input.expectedQueue });
+      }
       case 'session.abort': return post('abort');
       case 'session.archive': return post('archive');
       case 'session.restore': return post('restore');

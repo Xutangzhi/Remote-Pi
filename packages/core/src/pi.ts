@@ -8,10 +8,11 @@ export interface Model { provider?: string; id?: string; name?: string; contextW
 export interface ExtensionDialog { dialogId: string; kind: 'confirm' | 'select' | 'input'; title: string; message?: string; options?: string[]; placeholder?: string; }
 export interface AskQuestion { id: string; question: string; detail?: string; multiple?: boolean; options: { value: string; label: string; detail?: string }[]; }
 export interface AskRequest { askId: string; questions: AskQuestion[]; }
+export interface QueuedMessage { kind: 'steer' | 'followUp'; text: string; hasAttachments?: boolean; attachmentCount?: number; }
 export interface SessionStatus {
   sessionId: string; model?: Model; thinkingLevel?: string;
   isStreaming: boolean; isCompacting: boolean; isBashRunning: boolean;
-  pendingMessageCount: number; queuedMessages?: { kind: string; text: string }[];
+  pendingMessageCount: number; queuedMessages?: QueuedMessage[]; queueMessageActionsUnavailable?: string;
   tokens?: { total: number; input: number; output: number }; cost?: number;
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
   pendingDialogs?: ExtensionDialog[]; warnings?: { message: string; severity?: string }[];
@@ -65,5 +66,5 @@ export interface TerminalPacket { subscriptionId: string; type: 'output' | 'exit
 export type PiOperation = 'machine.status' | 'sessions.unread' | 'session.acknowledgeUnread' | 'projects.list' | 'projects.add' | 'projects.directories' | 'workspaces.list' | 'workspace.trust'
   | 'sessions.list' | 'session.create' | 'session.messages' | 'session.prompt' | 'session.abort' | 'session.archive' | 'session.restore'
   | 'session.rename' | 'session.models' | 'session.model' | 'session.thinkingLevels' | 'session.thinking' | 'session.dialog'
-  | 'session.ask' | 'session.media' | 'session.commands' | 'session.command' | 'session.command.respond' | 'session.shell'
+  | 'session.queue.remove' | 'session.ask' | 'session.media' | 'session.commands' | 'session.command' | 'session.command.respond' | 'session.shell'
   | 'session.tree.navigate' | 'session.tree.fork' | 'files.suggest' | 'files.tree' | 'files.read' | 'git.status' | 'git.diff';

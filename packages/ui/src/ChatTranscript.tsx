@@ -1,8 +1,8 @@
 import { getBridge } from './bridge';
-import { isValidElement, useEffect, useRef, useState, type ReactNode } from 'react';
-import Markdown, { defaultUrlTransform } from 'react-markdown';
-import { fileLinkPath, remarkFileReferences } from './file-links';
-export { fileLinkPath, remoteFilePath } from './file-links';
+import { createContext, isValidElement, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import Markdown, { defaultUrlTransform, type Components } from 'react-markdown';
+import { createFileReferenceChecker, fileLinkPath, remarkFileReferences } from './file-links';
+export { fileLinkPath, remoteFilePath, filePreviewError } from './file-links';
 import remarkGfm from 'remark-gfm';
 import { Check, ChevronRight, Copy, Terminal, X } from 'lucide-react';
 import type { AskRequest, SessionRef } from '@remote-pi/core/pi';
@@ -27,12 +27,33 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   return <div className="code-block"><div className="code-block-toolbar"><span>{code?.props.className?.replace(/^language-/, '') || '代码'}</span><CopyButton text={(code?.props.children || '').replace(/\n$/, '')} label="复制代码" /></div><pre>{children}</pre></div>;
 }
 
-export function RichText({ text, onOpenFile }: { text: string; onOpenFile?: (path: string) => void }) {
-  return <div className="prose"><Markdown remarkPlugins={onOpenFile ? [remarkGfm, remarkFileReferences] : [remarkGfm]} urlTransform={(url) => onOpenFile && fileLinkPath(url) ? url : defaultUrlTransform(url)} components={{
-    a: ({ href, children }) => <a href={href} title={href && onOpenFile && fileLinkPath(href) ? `预览远端文件：${href}` : undefined} onClick={(event) => { event.preventDefault(); if (!href) return; if (/^https?:\/\//i.test(href)) void getBridge().openLink(href); else if (onOpenFile && fileLinkPath(href)) onOpenFile(href); }}>{children}</a>,
+type FileLinks = { onOpenFile?: (path: string) => void; onCheckFile?: (path: string) => Promise<boolean> };
+const FileLinkContext = createContext<FileLinks>({});
+
+export function useFileReferenceChecker(projectId?: string, workspaceId?: string, workspacePath = '', directory = workspacePath) {
+  return useMemo(() => createFileReferenceChecker((query) => piRequest<{ path: string }[]>('files.suggest', { projectId, workspaceId, query, scope: 'all' }), workspacePath, directory), [projectId, workspaceId, workspacePath, directory]);
+}
+
+const FileLink: Components['a'] = ({ href, children, node }) => {
+  const { onOpenFile, onCheckFile } = useContext(FileLinkContext);
+  const automatic = !!node?.properties['data-file-reference'];
+  const [verified, setVerified] = useState<{ href: string; checker: FileLinks['onCheckFile'] }>();
+  useEffect(() => {
+    let active = true;
+    setVerified(undefined);
+    if (automatic && href && onCheckFile) void onCheckFile(href).then((exists) => { if (active && exists) setVerified({ href, checker: onCheckFile }); }).catch(() => {});
+    return () => { active = false; };
+  }, [automatic, href, onCheckFile]);
+  if (automatic && (!verified || verified.href !== href || verified.checker !== onCheckFile)) return <>{children}</>;
+  return <a href={href} title={href && onOpenFile && fileLinkPath(href) ? `预览远端文件：${href}` : undefined} onClick={(event) => { event.preventDefault(); if (!href) return; if (/^https?:\/\//i.test(href)) void getBridge().openLink(href); else if (onOpenFile && fileLinkPath(href)) onOpenFile(href); }}>{children}</a>;
+};
+
+export function RichText({ text, onOpenFile, onCheckFile }: { text: string } & FileLinks) {
+  return <FileLinkContext.Provider value={{ onOpenFile, onCheckFile }}><div className="prose"><Markdown remarkPlugins={onOpenFile ? [remarkGfm, remarkFileReferences] : [remarkGfm]} urlTransform={(url) => onOpenFile && fileLinkPath(url) ? url : defaultUrlTransform(url)} components={{
+    a: FileLink,
     img: ({ alt }) => <span className="muted">[图片：{alt || '外部图片'}]</span>,
     pre: CodeBlock,
-  }}>{text}</Markdown></div>;
+  }}>{text}</Markdown></div></FileLinkContext.Provider>;
 }
 
 function ConversationImage({ image, session }: { image: ImagePart; session: SessionRef }) {
@@ -91,11 +112,11 @@ function AskForm({ request, session, onError }: { request: AskRequest; session: 
   }} /></fieldset>)}<div className="dialog-footer"><button type="button" className="button secondary" disabled={busy} onClick={() => void submit(true)}>取消</button><button className="button primary" disabled={busy || !request.questions.every((question) => answers[question.id]?.length || other[question.id]?.trim())}>提交回答</button></div></form>;
 }
 
-export function Transcript({ items, session, onError, onOpenFile }: { items: TranscriptItem[]; session: SessionRef; onError: (error: unknown) => void; onOpenFile?: (path: string) => void }) {
+export function Transcript({ items, session, onError, onOpenFile, onCheckFile }: { items: TranscriptItem[]; session: SessionRef; onError: (error: unknown) => void } & FileLinks) {
   return <>{items.map((item, index) => item.kind === 'tool' ? <ToolCard key={item.id} allowAsk={index === items.length - 1} tool={item} session={session} onError={onError} /> : (item.text || item.thinking || item.images.length) ? <article key={item.id} className={`message message-${item.role}`} data-testid={`message-${item.role}`}>
     {item.role === 'assistant' && <div className="assistant-label"><span className="pi-glyph">π</span>Pi<span>{item.model}</span></div>}
-    {item.thinking && <details className="thinking"><summary><ChevronRight size={13} />思考过程</summary><RichText text={item.thinking} onOpenFile={onOpenFile} /></details>}
-    <div className="message-content"><RichText text={item.text} onOpenFile={onOpenFile} />{item.images.map((image, index) => <ConversationImage key={index} image={image} session={session} />)}</div>
+    {item.thinking && <details className="thinking"><summary><ChevronRight size={13} />思考过程</summary><RichText text={item.thinking} onOpenFile={onOpenFile} onCheckFile={onCheckFile} /></details>}
+    <div className="message-content"><RichText text={item.text} onOpenFile={onOpenFile} onCheckFile={onCheckFile} />{item.images.map((image, index) => <ConversationImage key={index} image={image} session={session} />)}</div>
     {item.text && !item.live && <div className="message-actions"><CopyButton text={item.text} label={item.role === 'assistant' ? '复制回复' : '复制消息'} /></div>}
   </article> : null)}</>;
 }

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { remoteFilePath } from '../src/renderer/workspace/file-links';
-import { fileLinkPath, remarkFileReferences } from '../../../packages/ui/src/file-links';
+import { createFileReferenceChecker, filePreviewError, fileLinkPath, remarkFileReferences } from '../../../packages/ui/src/file-links';
 
 const root = '/srv/projects/remote-pi';
 test('file links resolve against the remote workspace or the current document directory', () => {
@@ -40,4 +40,45 @@ test('inline paths become links while code blocks and existing link labels stay 
   assert.deepEqual(tree.children[0]!.children?.map((child) => child.type), ['link', 'link', 'link', 'inlineCode', 'inlineCode']);
   assert.equal(tree.children[1]!.type, 'code');
   assert.equal(tree.children[2]!.children?.[0]!.type, 'inlineCode');
+  assert.deepEqual((tree.children[0]!.children?.[0] as any).data, { hProperties: { 'data-file-reference': true } });
+  assert.equal((tree.children[2] as any).data, undefined);
+});
+
+
+test('automatic references require an exact file, including hidden and untracked paths', async () => {
+  const queries: string[] = [];
+  const check = createFileReferenceChecker(async (path) => {
+    queries.push(path);
+    return ['.loopx/registry.json', 'docs/report.md', 'folder.txt/', 'backup/missing.txt', 'Main.ts'].map((path) => ({ path }));
+  }, root);
+  assert.equal(await check('.loopx/registry.json'), true);
+  assert.equal(await check('docs/report.md:12'), true);
+  assert.equal(await check('folder.txt'), false);
+  assert.equal(await check('missing.txt'), false);
+  assert.equal(await check('main.ts'), false);
+  assert.equal(await check('https://example.com/file.txt'), false);
+  assert.deepEqual(queries, ['.loopx/registry.json', 'docs/report.md', 'folder.txt', 'missing.txt', 'main.ts']);
+  const inDocument = createFileReferenceChecker(async (path) => [{ path: 'docs/next.md' }], root, `${root}/docs`);
+  assert.equal(await inDocument('next.md'), true);
+});
+
+test('reference checks coalesce pending requests but do not cache missing or removed files', async () => {
+  let calls = 0;
+  let files: { path: string }[] = [];
+  const check = createFileReferenceChecker(async () => { calls++; return files; }, root);
+  assert.deepEqual(await Promise.all([check('new.txt'), check('./new.txt')]), [false, false]);
+  assert.equal(calls, 1);
+  files = [{ path: 'new.txt' }];
+  assert.equal(await check('new.txt'), true);
+  files = [];
+  assert.equal(await check('new.txt'), false);
+  const denied = createFileReferenceChecker(async () => { throw new Error('Path is outside allowed paths'); }, root);
+  assert.equal(await denied('/private/file.txt'), false);
+});
+
+test('missing preview errors show the resolved location without Electron transport noise', () => {
+  const error = new Error("Error invoking remote method 'pi:request': Error: Path does not exist");
+  assert.equal(filePreviewError(error, '.loopx/registry.json', root), `无法预览 ${root}/.loopx/registry.json：文件不存在。聊天中的路径可能只是示例，或文件尚未创建、已被移动。`);
+  assert.match(filePreviewError(new Error('Permission denied'), '/outside/report.md', root), /^无法预览 \/outside\/report.md：Permission denied$/);
+  assert.match(filePreviewError(error, '~/report.md', root), /^无法预览 ~\/report.md：文件不存在/);
 });

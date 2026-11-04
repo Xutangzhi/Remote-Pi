@@ -85,7 +85,7 @@ async function fixture(page: Page, theme: 'light' | 'dark' = 'light') {
             { role: 'toolResult', toolCallId: 'ask-tool', toolName: 'ask_user', content: '等待回答', isError: false, details: { ask: w.__fixture.askRequest } },
           ] : session.id === 'main' ? [
             { role: 'user', entryId: 'u1', content: '把服务器上的工作带到手机上。' },
-            { role: 'assistant', entryId: 'a1', content: [{ type: 'text', text: answer }, { type: 'toolCall', id: 'read-1', name: 'read', arguments: { path: 'README.md' } }] },
+            { role: 'assistant', entryId: 'a1', content: [{ type: 'text', text: w.__fixture.answer }, { type: 'toolCall', id: 'read-1', name: 'read', arguments: { path: 'README.md' } }] },
             { role: 'toolResult', entryId: 't1', toolCallId: 'read-1', toolName: 'read', content: toolOutput, isError: false },
           ] : [{ role: 'assistant', entryId: 'a2', content: session.id === 'child' ? '正在检查 SSH 身份验证与主机指纹。' : '发布清单已经准备好。' }];
           emit('workspace', { type: 'snapshot', subscriptionId: sub, session, snapshot: { seq: 1, partial: null, page: { messages, start: 0, total: messages.length }, status: status(session.id) } });
@@ -402,4 +402,107 @@ test('phone previews spreadsheets and media, switches sheets and releases each f
   await screenshot(page, testInfo, 'phone-document');
   await back(page); await expect(page.locator('.inspector')).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => (window as any).__fixture.released.length)).toBe(15);
+});
+
+
+test('chat distinguishes illustrative paths from real hidden files and explains missing explicit links', async ({ page }) => {
+  await fixture(page);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__fixture.answer = '示例 `.loopx/registry.json`；真实文件 `.config/settings.json`；[缺失文件](missing.txt)。';
+    const original = w.desktop.piRequest;
+    w.desktop.piRequest = async (operation: string, input: any) => {
+      if (operation === 'files.suggest') {
+        w.__fixture.calls.push({ operation, input });
+        // A fuzzy match must never become a link to a different file.
+        return [{ path: '.config/settings.json', kind: 'other' }, { path: 'backup/.loopx/registry.json', kind: 'other' }];
+      }
+      if (operation === 'files.read') {
+        if (input.path === 'missing.txt') throw new Error('Path does not exist');
+        return { path: input.path, content: '{"ready":true}', binary: false, truncated: false };
+      }
+      return original(operation, input);
+    };
+  });
+  await connect(page);
+  await expect(page.getByRole('link', { name: '.config/settings.json', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: '.loopx/registry.json', exact: true })).toHaveCount(0);
+  await expect(page.locator('code').filter({ hasText: /^\.loopx\/registry\.json$/ })).toBeVisible();
+  await page.getByRole('link', { name: '.config/settings.json', exact: true }).tap();
+  await expect(page.locator('pre.file-preview')).toHaveText('{"ready":true}');
+  await back(page);
+  await page.getByRole('link', { name: '缺失文件', exact: true }).tap();
+  await expect(page.locator('.panel-error')).toContainText('/srv/projects/remote-pi/missing.txt：文件不存在');
+  await back(page);
+  await page.getByLabel('发送消息', { exact: true }).fill('继续聊天');
+  await page.getByRole('button', { name: '发送', exact: true }).tap();
+  await expect(page.getByTestId('message-user').last()).toContainText('继续聊天');
+  const queries = await page.evaluate(() => (window as any).__fixture.calls.filter((call: any) => call.operation === 'files.suggest').map((call: any) => call.input));
+  expect(queries).toEqual([
+    { projectId: 'p1', workspaceId: 'w1', query: '.loopx/registry.json', scope: 'all' },
+    { projectId: 'p1', workspaceId: 'w1', query: '.config/settings.json', scope: 'all' },
+  ]);
+});
+
+test('phone can cancel and recall queued messages, preserves drafts and handles stale queues', async ({ page }) => {
+  await fixture(page);
+  await page.evaluate(() => {
+    const w = window as any;
+    const original = w.desktop.piRequest;
+    w.__fixture.queue = [{ kind: 'steer', text: 'adjust' }, { kind: 'followUp', text: 'next' }, { kind: 'followUp', text: 'image', hasAttachments: true, attachmentCount: 1 }];
+    w.desktop.piRequest = async (operation: string, input: any) => {
+      if (operation === 'session.queue.remove') {
+        w.__fixture.calls.push({ operation, input });
+        if (w.__fixture.queueDelay) await new Promise((resolve) => setTimeout(resolve, w.__fixture.queueDelay));
+        if (JSON.stringify(w.__fixture.queue) !== JSON.stringify(input.expectedQueue)) throw new Error('Queued messages changed; refresh the queue and try again');
+        w.__fixture.queue = w.__fixture.queue.filter((_: any, index: number) => index !== input.index);
+        w.__fixture.publishQueue();
+        return { sessionId: 'main', isStreaming: true, isCompacting: false, isBashRunning: false, pendingMessageCount: w.__fixture.queue.length, queuedMessages: [...w.__fixture.queue] };
+      }
+      return original(operation, input);
+    };
+    const watch = w.desktop.watchSession;
+    const subscribe = w.desktop.onWorkspace;
+    const listeners: any[] = [];
+    w.desktop.onWorkspace = (callback: any) => { listeners.push(callback); return subscribe(callback); };
+    w.desktop.watchSession = async (session: any, subscriptionId: string) => {
+      await watch(session, subscriptionId);
+      w.__fixture.publishQueue = () => listeners.forEach((callback) => callback({ type: 'event', subscriptionId, session, event: { type: 'status.update', status: { sessionId: session.id, isStreaming: true, isCompacting: false, isBashRunning: false, pendingMessageCount: w.__fixture.queue.length, queuedMessages: [...w.__fixture.queue] } } }));
+      setTimeout(w.__fixture.publishQueue, 50);
+    };
+  });
+  await connect(page);
+  const rows = page.locator('.queued-message-row');
+  const input = page.getByLabel('发送消息', { exact: true });
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(0)).toContainText('引导：adjust');
+  await input.fill('我的草稿');
+  await expect(rows.nth(0).getByRole('button', { name: '撤回编辑', exact: true })).toBeDisabled();
+  await rows.nth(1).getByRole('button', { name: '取消', exact: true }).tap();
+  await expect(rows).toHaveCount(2);
+  await expect(input).toHaveValue('我的草稿');
+  await input.fill('');
+  await rows.nth(0).getByRole('button', { name: '撤回编辑', exact: true }).tap();
+  await expect(input).toHaveValue('adjust');
+  await expect(page.getByLabel('发送方式')).toHaveValue('steer');
+  await expect(rows).toHaveCount(1);
+  await expect(rows.nth(0).getByRole('button', { name: '撤回编辑', exact: true })).toBeDisabled();
+  await input.fill('edited adjustment');
+  await page.getByRole('button', { name: '发送', exact: true }).tap();
+  await expect(input).toHaveValue('');
+  expect(await page.evaluate(() => (window as any).__fixture.calls.filter((call: any) => call.operation === 'session.prompt').map((call: any) => call.input))).toEqual([{ id: 'main', cwd: '/srv/projects/remote-pi', text: 'edited adjustment', streamingBehavior: 'steer' }]);
+  await rows.nth(0).getByRole('button', { name: '取消', exact: true }).tap();
+  await expect(rows).toHaveCount(0);
+
+  await page.evaluate(() => { const f = (window as any).__fixture; f.queue = [{ kind: 'steer', text: 'consumed' }, { kind: 'followUp', text: 'keep' }]; f.publishQueue(); f.queueDelay = 250; });
+  await expect(rows).toHaveCount(2);
+  await rows.nth(0).getByRole('button', { name: '取消', exact: true }).tap();
+  await page.evaluate(() => { const f = (window as any).__fixture; f.queue.shift(); f.publishQueue(); });
+  await expect(page.locator('.queued-messages [role="alert"]')).toContainText('队列已变化');
+  await expect(rows).toHaveCount(1);
+  await rows.nth(0).getByRole('button', { name: '撤回编辑', exact: true }).tap();
+  await expect(input).toHaveValue('keep');
+  await expect(page.getByLabel('发送方式')).toHaveValue('followUp');
+  await expect(rows).toHaveCount(0);
+  await fits(page);
 });

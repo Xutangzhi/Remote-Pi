@@ -1,4 +1,4 @@
-type MarkdownNode = { type: string; value?: string; url?: string; children?: MarkdownNode[] };
+type MarkdownNode = { type: string; value?: string; url?: string; children?: MarkdownNode[]; data?: { hProperties: Record<string, boolean> } };
 
 export function fileLinkPath(href: string): string | undefined {
   let value = href.trim();
@@ -26,7 +26,7 @@ export function remarkFileReferences() {
         if (child.type === 'inlineCode' && child.value) {
           const path = fileLinkPath(child.value);
           if (path && !/\s/.test(path) && (/^(?:\/|\.\.?\/|~\/)/.test(path) || /^(?:[^/\s]+\/)*[^/\s]+\.[a-z\d]{1,12}$/i.test(path))) {
-            return { type: 'link', url: child.value, children: [child] };
+            return { type: 'link', url: child.value, children: [child], data: { hProperties: { 'data-file-reference': true } } };
           }
         }
         visit(child); return child;
@@ -34,6 +34,28 @@ export function remarkFileReferences() {
     };
     visit(tree);
   };
+}
+
+export function createFileReferenceChecker(suggest: (path: string) => Promise<{ path: string }[]>, workspacePath: string, directory = workspacePath) {
+  const pending = new Map<string, Promise<boolean>>();
+  return async (href: string): Promise<boolean> => {
+    try {
+      const path = remoteFilePath(href, workspacePath, directory);
+      let request = pending.get(path);
+      if (!request) {
+        // Suggestions can include fuzzy matches and directories. Only an exact file is a link.
+        request = suggest(path).then((files) => files.some((file) => file.path === path && !file.path.endsWith('/'))).catch(() => false).finally(() => pending.delete(path));
+        pending.set(path, request);
+      }
+      return await request;
+    } catch { return false; }
+  };
+}
+
+export function filePreviewError(reason: unknown, path: string, workspacePath: string): string {
+  const message = (reason instanceof Error ? reason.message : String(reason)).replace(/^Error invoking remote method 'pi:request': (?:Error: )?/, '');
+  const location = path.startsWith('/') || path.startsWith('~/') ? path : `${workspacePath.replace(/\/$/, '')}/${path}`;
+  return `无法预览 ${location}：${message === 'Path does not exist' ? '文件不存在。聊天中的路径可能只是示例，或文件尚未创建、已被移动。' : message}`;
 }
 
 
