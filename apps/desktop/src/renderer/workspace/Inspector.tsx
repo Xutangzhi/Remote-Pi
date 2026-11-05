@@ -33,6 +33,7 @@ export function Inspector({ project, workspace, panel, fileRequest, closing, onC
   useEffect(() => {
     let active = true; setError(''); setLoading(true); setFile(undefined); setRaw(false);
     if (panel === 'terminal' || closing) { setLoading(false); return; }
+    if (panel === 'diff') setDiff(undefined);
     const load = panel === 'files'
       ? selectedFile
         ? piRequest<FileContent>('files.read', { ...scope, path: selectedFile.path }).then((value) => { if (active) setFile(value); })

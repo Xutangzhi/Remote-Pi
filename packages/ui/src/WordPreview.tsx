@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { renderAsync } from 'docx-preview';
 import { DocumentControls } from './DocumentControls';
 
-const documentShell = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:; base-uri 'none'; form-action 'none'"><style>body{margin:0;background:#ddd;color:#111;color-scheme:light} .docx-wrapper{padding:8px!important;align-items:flex-start!important} section.docx{margin:0!important;flex-shrink:0} a{pointer-events:none}</style></head><body></body></html>`;
+const documentShell = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:; base-uri 'none'; form-action 'none'"><style>body{margin:0;background:transparent;color:#111;color-scheme:light} .docx-wrapper{padding:8px!important;align-items:flex-start!important;background:transparent!important} section.docx{margin:0!important;flex-shrink:0} a{pointer-events:none}</style></head><body></body></html>`;
 export default function WordPreview({ data }: { data: ArrayBuffer }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false); const [pages, setPages] = useState(0);

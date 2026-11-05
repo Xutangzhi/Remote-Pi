@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { CommandResult, SessionInfo } from '../../shared/pi';
 import { piRequest, sessionInput } from './api';
-import { useDialogFocus } from './useDialogFocus';
+import { getTopDialog, useDialogFocus } from './useDialogFocus';
 
 export interface PendingCommand { session: SessionInfo; result: Extract<CommandResult, { type: 'select' | 'tree' }>; local?: 'model' | 'resume'; }
 
@@ -16,7 +16,7 @@ export function CommandDialog({ pending, onClose, onResult, onLocal }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape' && !busy) onClose(); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape' && getTopDialog() === dialogRef.current && !event.isComposing && event.keyCode !== 229 && !event.defaultPrevented && !busy) onClose(); };
     window.addEventListener('keydown', escape); return () => window.removeEventListener('keydown', escape);
   }, [busy, onClose]);
   const submit = async (fork = false) => {

@@ -1,12 +1,26 @@
 import { getBridge } from './bridge';
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { Component, lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { filePreviewFormat, type TablePreview } from '@remote-pi/core/file-preview';
 
 const PdfPreview = lazy(() => import('./PdfPreview'));
 const WordPreview = lazy(() => import('./WordPreview'));
 const PresentationPreview = lazy(() => import('./PresentationPreview'));
 
-export function FilePreview({ path, projectId, workspaceId }: { path: string; projectId: string; workspaceId: string }) {
+type FilePreviewProps = { path: string; projectId: string; workspaceId: string };
+
+class PreviewBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  render() {
+    return this.state.failed ? <div className="rich-file-preview"><div className="panel-error" role="alert">此文件的预览组件发生错误。可以关闭面板返回聊天，或选择其他文件。</div></div> : this.props.children;
+  }
+}
+
+export function FilePreview(props: FilePreviewProps) {
+  return <PreviewBoundary key={JSON.stringify([props.projectId, props.workspaceId, props.path])}><FilePreviewContent {...props} /></PreviewBoundary>;
+}
+
+function FilePreviewContent({ path, projectId, workspaceId }: FilePreviewProps) {
   const format = filePreviewFormat(path)!;
   const [documentData, setDocumentData] = useState<ArrayBuffer>();
   const [url, setURL] = useState('');

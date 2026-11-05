@@ -155,3 +155,21 @@ test('a failed answer remains editable and the question can still be cancelled',
     expect(fixture.calls.filter((call) => call.path.endsWith('/ask/submit'))).toHaveLength(1);
   } finally { await close(); }
 });
+
+
+test('prototype-named question IDs submit independent answers without crashing the desktop', async () => {
+  const ids = ['constructor', 'toString', '__proto__'];
+  const { fixture, page, close } = await connectedFixture([askMessage(ids.map((id) => ({ id, question: `问题 ${id}`, options: [{ value: 'yes', label: `选择 ${id}` }] })))]);
+  try {
+    const form = page.locator('form.ask-form');
+    await form.getByRole('radio', { name: '选择 constructor', exact: true }).click();
+    await form.getByRole('textbox', { name: '问题 toString 补充回答', exact: true }).fill('自定义回答');
+    await form.getByRole('radio', { name: '选择 __proto__', exact: true }).click();
+    await form.getByRole('button', { name: '提交回答' }).click();
+    await expect(page.locator('.ask-form')).toHaveText('回答已提交');
+    expect(fixture.calls.find((call) => call.path.endsWith('/ask/submit'))!.body.answers).toEqual([
+      { id: 'constructor', values: ['yes'] }, { id: 'toString', values: [], otherText: '自定义回答' }, { id: '__proto__', values: ['yes'] },
+    ]);
+    await expect(page.getByLabel('发送消息', { exact: true })).toBeEditable();
+  } finally { await close(); }
+});

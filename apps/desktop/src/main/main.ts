@@ -6,6 +6,7 @@ import { SettingsStore } from './profiles';
 import { AuthBroker } from './auth-broker';
 import { TunnelManager } from './tunnel';
 import { PiClient } from './pi-client';
+import { openWebPage } from './web-browser';
 import type { AuthChallenge, ConnectionState, EnvironmentRefresh, Theme } from '../shared/types';
 
 app.setName('Remote Pi');
@@ -63,19 +64,6 @@ function trustedSender(event: IpcMainInvokeEvent | Electron.IpcMainEvent): void 
 function handle(channel: string, callback: (...args: any[]) => unknown): void {
   ipcMain.handle(channel, (event, ...args) => { trustedSender(event); return callback(...args); });
 }
-function validWebURL(url: string): boolean {
-  try { return ['http:', 'https:'].includes(new URL(url).protocol); } catch { return false; }
-}
-function openLinkInsideApp(url: string): void {
-  if (!validWebURL(url)) return;
-  const child = new BrowserWindow({ parent: mainWindow, width: 1040, height: 760, title: 'Remote Pi · Browser',
-    show: !backgroundTests, focusable: !backgroundTests,
-    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true }, });
-  child.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  child.webContents.on('will-navigate', (event, next) => { if (!validWebURL(next)) event.preventDefault(); });
-  child.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-  void child.loadURL(url).catch(() => {});
-}
 
 function registerIPC(): void {
   handle('settings:get', () => store.get());
@@ -132,7 +120,7 @@ function registerIPC(): void {
     trustedSender(event);
     if ([cols, rows].every((value) => Number.isInteger(value) && value > 0 && value < 1000)) pi.terminalFrame(subscriptionId, { type: 'resize', cols, rows });
   });
-  handle('link:open', (url) => { if (typeof url === 'string') openLinkInsideApp(url); });
+  handle('link:open', (url) => { if (typeof url === 'string') return openWebPage(mainWindow, url, backgroundTests); });
 
 }
 

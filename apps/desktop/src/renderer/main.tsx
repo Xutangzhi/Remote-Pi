@@ -4,6 +4,7 @@ import { ArrowRight, Check, ChevronDown, ChevronRight, CircleHelp, Fingerprint, 
 import type { AuthChallenge, ConnectionState, ServerProfile, Theme } from '../shared/types';
 import './styles.css';
 import { Workspace } from './workspace/Workspace';
+import { getTopDialog, useDialogFocus } from '@remote-pi/ui/useDialogFocus';
 
 const bridge = window.desktop;
 const freshProfile = (): ServerProfile => ({ id: crypto.randomUUID(), name: '', host: '', username: '', port: null, identityFile: '', remotePort: 8504 });
@@ -139,20 +140,30 @@ function App() {
       <footer className="statusbar"><span><span className={`status-dot ${connected ? 'is-online' : busy(connection) ? 'is-busy' : ''}`} />{connected ? `${activeProfile ? address(activeProfile) : 'SSH'} · 远端工作区` : busy(connection) ? connection.message : '就绪，等待连接'}</span><span><LockKeyhole size={11} />{connected ? `Pi Web · 127.0.0.1:${activeProfile?.remotePort ?? 8504}` : 'OpenSSH · 端到端加密连接'}</span></footer>
     </main>
     {challenge && <AuthDialog challenge={challenge} onAnswer={(answer) => void bridge.answerChallenge(challenge.id, answer).catch((reason) => setError(String(reason)))} />}
-    {help && <div className="modal-backdrop" onClick={() => setHelp(false)}><section className="help-dialog" role="dialog" aria-modal="true" aria-label="使用说明" onClick={(event) => event.stopPropagation()}><button className="modal-close icon-button" aria-label="关闭使用说明" onClick={() => setHelp(false)}><X size={18} /></button><span className="dialog-icon"><Terminal size={24} /></span><h2>准备你的远端工作台</h2><p>使用服务器上已配置好 Pi 的同一个用户安装 Pi Web。需要 Node.js ≥ 22.19 和 Pi 1.x。</p><pre>npm install -g @jmfederico/pi-web --allow-scripts=node-pty<br />pi-web install<br />pi-web doctor<br />pi-web status</pre><p>Linux 用户服务需要在退出 SSH 后继续运行时：</p><pre>sudo loginctl enable-linger "$USER"</pre><p>回到 App，填写服务器地址并连接。SSH 别名、ProxyJump、默认身份文件和 ssh-agent 都由系统 OpenSSH 读取。</p><div className="help-note"><ShieldCheck size={17} />首次连接请核对主机指纹。密码不会保存在本地配置中。断开连接不会停止远端 Pi Web 服务。</div><button className="button primary" onClick={() => setHelp(false)}>开始连接<ArrowRight size={16} /></button></section></div>}
+    {help && <HelpDialog onClose={() => setHelp(false)} />}
   </div>;
 }
 
+function HelpDialog({ onClose }: { onClose: () => void }) {
+  const dialogRef = useDialogFocus<HTMLElement>();
+  useEffect(() => {
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape' && getTopDialog() === dialogRef.current && !event.isComposing && event.keyCode !== 229) onClose(); };
+    window.addEventListener('keydown', escape); return () => window.removeEventListener('keydown', escape);
+  }, [onClose]);
+  return <div className="modal-backdrop" onClick={() => onClose()}><section ref={dialogRef} tabIndex={-1} className="help-dialog" role="dialog" aria-modal="true" aria-label="使用说明" onClick={(event) => event.stopPropagation()}><button className="modal-close icon-button" aria-label="关闭使用说明" onClick={() => onClose()}><X size={18} /></button><span className="dialog-icon"><Terminal size={24} /></span><h2>准备你的远端工作台</h2><p>使用服务器上已配置好 Pi 的同一个用户安装 Pi Web。需要 Node.js ≥ 22.19 和 Pi 1.x。</p><pre>npm install -g @jmfederico/pi-web --allow-scripts=node-pty<br />pi-web install<br />pi-web doctor<br />pi-web status</pre><p>Linux 用户服务需要在退出 SSH 后继续运行时：</p><pre>sudo loginctl enable-linger "$USER"</pre><p>回到 App，填写服务器地址并连接。SSH 别名、ProxyJump、默认身份文件和 ssh-agent 都由系统 OpenSSH 读取。</p><div className="help-note"><ShieldCheck size={17} />首次连接请核对主机指纹。密码不会保存在本地配置中。断开连接不会停止远端 Pi Web 服务。</div><button className="button primary" onClick={() => onClose()}>开始连接<ArrowRight size={16} /></button></section></div>;
+}
+
 function AuthDialog({ challenge, onAnswer }: { challenge: AuthChallenge; onAnswer: (answer: string | null) => void }) {
+  const dialogRef = useDialogFocus<HTMLFormElement>();
   const [answer, setAnswer] = useState('');
   const [submitting, setSubmitting] = useState(false);
   useEffect(() => { setAnswer(''); setSubmitting(false); }, [challenge.id]);
   useEffect(() => {
-    const handler = (event: KeyboardEvent) => { if (event.key === 'Escape') onAnswer(null); };
+    const handler = (event: KeyboardEvent) => { if (event.key === 'Escape' && getTopDialog() === dialogRef.current && !event.isComposing && event.keyCode !== 229) onAnswer(null); };
     window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
   }, [challenge.id, onAnswer]);
   const host = challenge.kind === 'host';
-  return <div className="modal-backdrop"><form className="auth-dialog" role="dialog" aria-modal="true" aria-label={host ? '确认服务器身份' : 'SSH 身份验证'} onSubmit={(event) => { event.preventDefault(); setSubmitting(true); onAnswer(host ? 'yes' : answer); setAnswer(''); }}>
+  return <div className="modal-backdrop"><form ref={dialogRef} tabIndex={-1} className="auth-dialog" role="dialog" aria-modal="true" aria-label={host ? '确认服务器身份' : 'SSH 身份验证'} onSubmit={(event) => { event.preventDefault(); setSubmitting(true); onAnswer(host ? 'yes' : answer); setAnswer(''); }}>
     <span className="dialog-icon">{host ? <Fingerprint size={25} /> : <KeyRound size={25} />}</span><h2>{host ? '确认服务器身份' : '完成 SSH 身份验证'}</h2><p>{host ? '首次连接此服务器。请核对下面的主机指纹，确认后会保存到系统 known_hosts。' : '请输入 SSH 请求的密码、私钥口令或验证码。此内容仅用于当前连接。'}</p><pre className="auth-prompt">{challenge.prompt}</pre>
     {!host && <label className="field">密码 / 口令 / 验证码<input autoFocus type="password" aria-label="SSH 验证响应" autoComplete="off" value={answer} onChange={(event) => setAnswer(event.target.value)} /></label>}
     <div className="dialog-footer"><button type="button" className="button secondary" onClick={() => onAnswer(null)}>取消连接</button><button type="submit" className="button primary" disabled={submitting}>{submitting ? '提交中…' : host ? '信任并连接' : '继续连接'}<ArrowRight size={15} /></button></div>

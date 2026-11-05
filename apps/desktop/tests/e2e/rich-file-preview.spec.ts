@@ -61,7 +61,12 @@ test('remote tables, images and media preview without leaving the workspace', as
     await open('large.csv'); await expect(page.locator('.rich-file-preview [role="alert"]')).toContainText('10 MiB');
     await open('missing.csv'); await expect(page.locator('.rich-file-preview [role="alert"]')).toContainText('HTTP 404');
     await open('table.xlsx'); await expect(page.getByRole('cell', { name: '测试商品', exact: true })).toBeVisible();
-    await checkDocumentPreviews(page, open, (name) => page.screenshot({ path: testInfo.outputPath(`${name}.png`), animations: 'disabled' }));
+    await checkDocumentPreviews(page, open, async (name) => {
+      await page.screenshot({ path: testInfo.outputPath(`${name}.png`), animations: 'disabled' });
+      await page.evaluate(() => document.documentElement.dataset.theme = 'dark');
+      await page.screenshot({ path: testInfo.outputPath(`${name}-dark.png`), animations: 'disabled' });
+      await page.evaluate(() => document.documentElement.dataset.theme = 'light');
+    });
     await page.screenshot({ path: testInfo.outputPath('document.png'), animations: 'disabled' });
     await page.getByLabel('关闭面板', { exact: true }).click(); await expect(page.locator('.rich-file-preview')).toHaveCount(0);
     expect(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some((window) => window.isVisible() || window.isFocused()))).toBe(false);

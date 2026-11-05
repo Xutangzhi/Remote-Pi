@@ -38,6 +38,7 @@ export async function startFixture({ binaryFrames = false } = {}) {
   const completionDelay = new Map<string, number>();
   const previewFiles = new Map<string, Buffer>();
   const fileContents = new Map<string, string>();
+  const directorySuggestions = [{ path: '/srv/projects', kind: 'directory' }];
   const indexedOnlyFiles = new Set<string>();
   const queueMutationDelay = new Map<string, number>();
   const fileReadDelay = new Map<string, number>(); const fileReadErrors = new Set<string>();
@@ -100,7 +101,7 @@ export async function startFixture({ binaryFrames = false } = {}) {
       if (request.method === 'POST') { const project = { id: randomUUID(), path: body.path, name: body.name || body.path.split('/').at(-1), createdAt: now }; projects.push(project); json(response, project); }
       else json(response, projects); return;
     }
-    if (path === `${prefix}/project-directories`) { json(response, [{ path: '/srv/projects', kind: 'directory' }]); return; }
+    if (path === `${prefix}/project-directories`) { json(response, directorySuggestions.filter((entry) => entry.path.startsWith(url.searchParams.get('q') || ''))); return; }
     const scope = path.match(/\/projects\/([^/]+)\/workspaces(?:\/([^/]+)\/(.*))?$/);
     if (scope) {
       const project = projects.find((item) => item.id === scope[1]);
@@ -264,7 +265,7 @@ export async function startFixture({ binaryFrames = false } = {}) {
     });
   });
   await new Promise<void>((resolve) => ssh.listen(0, '127.0.0.1', resolve));
-  return { sshPort: (ssh.address() as { port: number }).port, webPort, calls, sessions, indexedOnlyFiles, setQueue, queueMutationDelay, snapshotDelay, completionDelay, previewFiles, fileContents, fileReadDelay, fileReadErrors, promptResponseDelay, askSubmitFailures, commandResults, commands, histories, emit, startWork, finishWork, ackDelay, catalogDelay,
+  return { sshPort: (ssh.address() as { port: number }).port, webPort, calls, projects, sessions, directorySuggestions, indexedOnlyFiles, setQueue, queueMutationDelay, snapshotDelay, completionDelay, previewFiles, fileContents, fileReadDelay, fileReadErrors, promptResponseDelay, askSubmitFailures, commandResults, commands, histories, emit, startWork, finishWork, ackDelay, catalogDelay,
     delayTerminalReady(ms: number) { terminalReadyDelay = ms; },
     get environmentRuns() { return environmentRuns; },
     failEnvironmentRefresh(fail: boolean) { failEnvironmentRefresh = fail; },
