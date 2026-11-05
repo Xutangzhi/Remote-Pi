@@ -50,7 +50,7 @@ export async function openWebPage(mainWindow: BrowserWindow, url: string, backgr
     if (mainFrame && code !== -3) fail(`网页加载失败：${description}。请关闭网页返回聊天。`);
   });
   page.webContents.on('render-process-gone', () => fail('网页进程已退出。请关闭网页返回聊天后重新打开。'));
-  page.webContents.on('did-finish-load', () => { if (!failed && !browser.isDestroyed()) page.setVisible(true); });
+  page.webContents.on('dom-ready', () => { if (!failed && !browser.isDestroyed()) page.setVisible(true); });
   const close = () => { if (!browser.isDestroyed()) browser.close(); };
   mainWindow.once('closed', close);
   browser.on('closed', () => {
