@@ -421,6 +421,10 @@ test('native composer completes remote skills/files, executes templates and hand
     await page.getByRole('option', { name: /Original request/ }).click();
     await page.getByLabel('上下文摘要方式').selectOption('custom');
     await page.getByLabel('摘要要求', { exact: true }).fill('Keep decisions');
+    await page.screenshot({ path: 'test-results/command-tree-light.png', animations: 'disabled' });
+    await page.evaluate(() => document.documentElement.dataset.theme = 'dark');
+    await page.screenshot({ path: 'test-results/command-tree-dark.png', animations: 'disabled' });
+    await page.evaluate(() => document.documentElement.dataset.theme = 'light');
     await page.getByRole('button', { name: '切换到此处', exact: true }).click();
     await expect(input).toHaveValue('Restored tree draft');
     expect(fixture.calls.findLast((call) => call.path.endsWith('/tree/navigate'))?.body.summary).toEqual({ mode: 'custom', instructions: 'Keep decisions' });

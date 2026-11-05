@@ -1,3 +1,4 @@
+import { checkPreviewIsolation } from '../../../desktop/tests/preview-isolation-checks';
 import { checkDocumentPreviews } from '../../../desktop/tests/document-preview-checks';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
@@ -28,7 +29,7 @@ async function fixture(page: Page, theme: 'light' | 'dark' = 'light') {
     const code = 'const workspace = "' + 'mobile-workspace-'.repeat(18) + '";';
     const answer = '我会保留项目和 Subagent 的层级，让聊天成为主屏。\n\n文件、变更和终端会在需要时全屏打开，输入框始终留在手边。\n\n```ts\n' + code + '\n```';
     const toolOutput = 'Read README.md: Remote Pi Android';
-    w.__fixture = { calls: [] as { operation: string; input: any }[], watchCount: 0, refresh: () => emit('refresh', undefined), copied: '', failCopy: false, code, answer, toolOutput };
+    w.__fixture = { calls: [] as { operation: string; input: any }[], challenge: (value: any) => emit('challenge', value), watchCount: 0, refresh: () => emit('refresh', undefined), copied: '', failCopy: false, code, answer, toolOutput };
     // Keep UI copy checks isolated from the user's clipboard.
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => {
       if (w.__fixture.failCopy) throw Error('fixture clipboard denied');
@@ -117,7 +118,7 @@ async function screenshot(page: Page, testInfo: TestInfo, name: string) {
   await testInfo.attach(name, { path, contentType: 'image/png' });
 }
 
-test('phone question choices can be cleared by touch and stay exclusive with custom text', async ({ page }) => {
+test('phone question choices can be cleared by touch and stay exclusive with custom text', async ({ page }, testInfo) => {
   await fixture(page);
   await page.evaluate(() => {
     (window as any).__fixture.askRequest = { askId: 'translation-ask', questions: [{
@@ -130,6 +131,10 @@ test('phone question choices can be cleared by touch and stay exclusive with cus
   const literal = form.getByRole('radio', { name: '直译', exact: true });
   await literal.tap();
   await expect(literal).toBeChecked();
+  await screenshot(page, testInfo, 'question-light');
+  await page.evaluate(() => document.documentElement.dataset.theme = 'dark');
+  await screenshot(page, testInfo, 'question-dark');
+  await page.evaluate(() => document.documentElement.dataset.theme = 'light');
   await literal.tap();
   await expect(literal).not.toBeChecked();
   await literal.tap();
@@ -147,6 +152,7 @@ for (const theme of ['light', 'dark'] as const) {
   test(`${theme} phone connection, chat, drawer, completions and workspace tools`, async ({ page }, testInfo) => {
     await fixture(page, theme);
     await expect(page.getByRole('button', { name: '连接工作台', exact: true })).toBeVisible();
+    await expect(page.locator('.mobile-version')).toContainText(JSON.parse(await readFile('package.json', 'utf8')).version);
     await screenshot(page, testInfo, 'connect');
     await connect(page);
     await expect(page.getByLabel('发送消息', { exact: true })).toBeInViewport({ ratio: 1 });
@@ -178,6 +184,7 @@ for (const theme of ['light', 'dark'] as const) {
     await screenshot(page, testInfo, 'files');
     await page.getByRole('button', { name: '切换到变更', exact: true }).click();
     await expect(page.getByText('暂无变更', { exact: true })).toBeVisible();
+    await screenshot(page, testInfo, 'git-controls');
     await page.getByRole('button', { name: '切换到终端', exact: true }).click();
     await expect(page.locator('.xterm-screen')).toBeVisible();
     await expect(page.getByText('正在连接远端终端…', { exact: true })).toHaveCount(0);
@@ -215,7 +222,7 @@ test('phone Enter keeps a newline, Ctrl+Enter sends, and the composer fits phone
   }
 });
 
-test('touch completes skills and file directories, drafts survive reload, and model dialogs handle Android Back', async ({ page }) => {
+test('touch completes skills and file directories, drafts survive reload, and model dialogs handle Android Back', async ({ page }, testInfo) => {
   await fixture(page); await connect(page);
   const input = page.getByLabel('发送消息', { exact: true });
   await input.fill('/skill:');
@@ -238,6 +245,7 @@ test('touch completes skills and file directories, drafts survive reload, and mo
   await input.fill('/model'); await input.press('Escape');
   await page.getByRole('button', { name: '发送', exact: true }).tap();
   await expect(page.getByRole('dialog', { name: '选择模型', exact: true })).toBeVisible();
+  await screenshot(page, testInfo, 'model-dialog');
   await back(page);
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByRole('button', { name: '对话菜单', exact: true }).click();
@@ -509,4 +517,190 @@ test('phone can cancel and recall queued messages, preserves drafts and handles 
   await expect(page.getByLabel('发送方式')).toHaveValue('followUp');
   await expect(rows).toHaveCount(0);
   await fits(page);
+});
+
+
+test('phone keeps preview component failures inside a closable panel', async ({ page }) => {
+  const files: Record<string, Buffer> = { 'healthy.csv': Buffer.from('状态\n仍能预览') };
+  for (const path of ['preview.pdf', 'preview.docx', 'preview.pptx']) files[path] = await readFile(`../desktop/tests/assets/${path}`);
+  await page.route('**/isolation-fixture/*', async (route) => {
+    const path = decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-1)!);
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: files[path] });
+  });
+  await fixture(page);
+  await page.evaluate((paths) => {
+    const w = window as any; const original = w.desktop.piRequest;
+    w.desktop.prepareFilePreview = async ({ path }: any) => `${location.origin}/isolation-fixture/${encodeURIComponent(path)}`;
+    w.desktop.releaseFilePreview = async () => {};
+    w.desktop.piRequest = async (operation: string, input: any) => {
+      if (operation === 'files.tree') return { path: '', entries: paths.map((path) => ({ name: path, path, type: 'file' })), truncated: false };
+      if (operation === 'files.read') return { path: input.path, content: '', binary: true, truncated: false };
+      return original(operation, input);
+    };
+  }, Object.keys(files));
+  await connect(page);
+  const open = async (path: string) => {
+    await page.getByRole('button', { name: '文件面板', exact: true }).tap();
+    if (await page.locator('.file-back').count()) await page.locator('.file-back').tap();
+    await page.getByRole('button', { name: path, exact: true }).tap();
+  };
+  await checkPreviewIsolation(page, open);
+  await fits(page);
+});
+
+test('phone project and directory pickers scroll by touch and Back closes the list first', async ({ page }, testInfo) => {
+  await fixture(page);
+  await page.evaluate(() => {
+    const w = window as any; const original = w.desktop.piRequest;
+    const projects = Array.from({ length: 30 }, (_, index) => ({ id: `picker-${index}`, name: `项目 ${String(index).padStart(2, '0')}`, path: `/srv/projects/picker-${index}`, createdAt: '' }));
+    w.desktop.piRequest = async (operation: string, input: any) => {
+      if (operation === 'projects.list') return [...await original(operation, input), ...projects];
+      if (operation === 'workspaces.list' && input.projectId.startsWith('picker-')) return { workspaces: [{ id: input.projectId, projectId: input.projectId, path: `/srv/projects/${input.projectId}`, label: 'main', isMain: true }] };
+      if (operation === 'sessions.list' && input.cwd.includes('picker-')) return [];
+      if (operation === 'projects.directories') return projects.map((project) => ({ path: project.path, kind: 'directory' }));
+      return original(operation, input);
+    };
+  });
+  await connect(page);
+  const swipe = async (list: ReturnType<Page['getByRole']>) => {
+    const box = (await list.boundingBox())!;
+    const cdp = await page.context().newCDPSession(page);
+    const x = box.x + box.width / 2; const y = box.y + box.height - 25;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    for (let step = 1; step <= 6; step++) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y - step * 25 }] });
+      await page.waitForTimeout(20);
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await cdp.detach();
+    await expect.poll(() => list.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+  };
+  await page.getByRole('button', { name: '展开侧栏', exact: true }).tap();
+  await page.locator('.new-chat').tap();
+  const dialog = page.getByRole('dialog', { name: '新建对话', exact: true });
+  const picker = dialog.getByRole('combobox', { name: '选择项目', exact: true });
+  await picker.tap();
+  const list = dialog.getByRole('listbox', { name: '选择项目', exact: true });
+  await swipe(list);
+  await screenshot(page, testInfo, 'phone-project-picker');
+  await back(page);
+  await expect(list).toHaveCount(0); await expect(dialog).toBeVisible();
+  await picker.tap();
+  await list.getByRole('option', { name: /项目 29/ }).tap();
+  await expect(picker).toContainText('项目 29');
+  await expect(dialog.getByRole('combobox', { name: '选择工作区' })).toContainText('/srv/projects/picker-29');
+  await back(page); await expect(dialog).toHaveCount(0);
+  await page.getByRole('button', { name: '展开侧栏', exact: true }).tap();
+  await page.getByLabel('添加项目', { exact: true }).tap();
+  const add = page.getByRole('dialog', { name: '添加远端项目', exact: true });
+  const directory = add.getByRole('combobox', { name: '远端目录', exact: true });
+  await directory.fill('/srv/projects/');
+  const suggestions = add.getByRole('listbox', { name: '远端目录', exact: true });
+  await expect(suggestions.getByRole('option')).toHaveCount(30);
+  await swipe(suggestions);
+  await back(page); await expect(suggestions).toHaveCount(0); await expect(add).toBeVisible();
+  await directory.tap();
+  await suggestions.getByRole('option', { name: /picker-29/ }).tap();
+  await expect(directory).toHaveValue('/srv/projects/picker-29');
+  await expect(suggestions).toHaveCount(0);
+  await back(page); await expect(add).toHaveCount(0);
+  await fits(page);
+});
+
+test('question IDs matching object prototype names remain editable without clearing the chat', async ({ page }) => {
+  await fixture(page);
+  await page.evaluate(() => {
+    (window as any).__fixture.askRequest = { askId: 'prototype-ids', questions: ['constructor', 'toString', '__proto__'].map((id) => ({ id, question: `问题 ${id}`, options: [{ value: 'yes', label: `选择 ${id}` }] })) };
+  });
+  await connect(page);
+  const form = page.locator('form.ask-form');
+  await form.getByRole('radio', { name: '选择 constructor', exact: true }).tap();
+  await form.getByRole('textbox', { name: '问题 toString 补充回答', exact: true }).fill('自定义回答');
+  await form.getByRole('radio', { name: '选择 __proto__', exact: true }).tap();
+  await form.getByRole('button', { name: '提交回答' }).tap();
+  await expect(form).toHaveCount(0);
+  await expect(page.getByLabel('发送消息', { exact: true })).toBeEditable();
+  expect(await page.evaluate(() => (window as any).__fixture.calls.find((call: any) => call.operation === 'session.ask').input.answers)).toEqual([
+    { id: 'constructor', values: ['yes'] }, { id: 'toString', values: [], otherText: '自定义回答' }, { id: '__proto__', values: ['yes'] },
+  ]);
+});
+
+test('IME Escape keeps rename and command dialogs open until composition finishes', async ({ page }) => {
+  await fixture(page); await connect(page);
+  await page.getByRole('button', { name: '对话菜单', exact: true }).tap();
+  await page.getByRole('button', { name: '重命名对话', exact: true }).tap();
+  const rename = page.getByRole('dialog', { name: '重命名对话' });
+  const name = rename.getByLabel('对话名称', { exact: true });
+  await name.fill('尚未保存的中文名称');
+  await name.dispatchEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true });
+  await expect(rename).toBeVisible(); await expect(name).toHaveValue('尚未保存的中文名称');
+  await name.press('Escape'); await expect(rename).toHaveCount(0);
+  const input = page.getByLabel('发送消息', { exact: true });
+  await input.fill('/model'); await input.press('Escape');
+  await page.getByRole('button', { name: '发送', exact: true }).tap();
+  const command = page.getByRole('dialog', { name: '选择模型' });
+  await command.getByRole('combobox').dispatchEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true });
+  await expect(command).toBeVisible();
+  await command.getByRole('combobox').press('Escape'); await expect(command).toHaveCount(0);
+});
+
+test('Git clears the previous diff while loading another scope and after a failed request', async ({ page }) => {
+  await fixture(page);
+  await page.evaluate(() => {
+    const w = window as any; const original = w.desktop.piRequest;
+    w.desktop.piRequest = async (operation: string, input: any) => {
+      if (operation === 'git.status') return { isGitRepo: true, branch: 'main', files: [{ path: 'README.md', status: 'M' }] };
+      if (operation === 'git.diff') return input.staged ? new Promise((_resolve, reject) => { w.__rejectDiff = () => reject(new Error('暂存区读取失败')); }) : { diff: '+仅属于工作区的旧内容' };
+      return original(operation, input);
+    };
+  });
+  await connect(page);
+  await page.getByRole('button', { name: '文件面板', exact: true }).tap();
+  await page.getByRole('button', { name: '切换到变更', exact: true }).tap();
+  await expect(page.locator('.diff-content')).toContainText('仅属于工作区的旧内容');
+  await page.getByLabel('变更类型', { exact: true }).selectOption('staged');
+  await expect(page.locator('.panel-loading')).toBeVisible();
+  await expect(page.locator('.diff-content')).not.toContainText('仅属于工作区的旧内容');
+  await expect.poll(() => page.evaluate(() => typeof (window as any).__rejectDiff)).toBe('function');
+  await page.evaluate(() => (window as any).__rejectDiff());
+  await expect(page.locator('.panel-error')).toContainText('暂存区读取失败');
+  await expect(page.locator('.diff-content')).not.toContainText('仅属于工作区的旧内容');
+  await fits(page);
+});
+
+test('SSH verification keeps keyboard focus inside its dialog and restores it after cancelling', async ({ page }) => {
+  await fixture(page);
+  const connectButton = page.getByRole('button', { name: '连接工作台', exact: true });
+  await connectButton.click();
+  const dialog = page.getByRole('dialog', { name: '确认服务器身份', exact: true });
+  await dialog.getByRole('button', { name: '信任并连接', exact: true }).focus();
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByRole('button', { name: '取消连接', exact: true })).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(dialog.getByRole('button', { name: '信任并连接', exact: true })).toBeFocused();
+  await back(page);
+  await expect(dialog).toHaveCount(0);
+  await expect(connectButton).toBeFocused();
+});
+
+
+test('a verification dialog above a workspace dialog keeps focus without recursive focus events', async ({ page }) => {
+  await fixture(page); await connect(page);
+  const errors: string[] = []; page.on('pageerror', (error) => errors.push(error.message));
+  await page.getByRole('button', { name: '对话菜单', exact: true }).tap();
+  await page.getByRole('button', { name: '重命名对话', exact: true }).tap();
+  const name = page.getByLabel('对话名称', { exact: true });
+  await name.fill('保留未保存的名称');
+  await page.evaluate(() => (window as any).__fixture.challenge({ id: 'reauth', kind: 'secret', prompt: 'Password:' }));
+  const secret = page.getByLabel('SSH 验证响应', { exact: true });
+  await expect(secret).toBeFocused();
+  await name.focus(); await expect(secret).toBeFocused();
+  await page.evaluate(() => {
+    const w = window as any;
+    w.desktop.answerChallenge = async () => w.__fixture.challenge(null);
+  });
+  await back(page);
+  await expect(secret).toHaveCount(0); await expect(name).toBeFocused();
+  await expect(name).toHaveValue('保留未保存的名称');
+  expect(errors).toEqual([]);
 });

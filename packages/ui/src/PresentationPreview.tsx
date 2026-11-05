@@ -5,10 +5,12 @@ export default function PresentationPreview({ data }: { data: ArrayBuffer }) {
   const [page, setPage] = useState(1); const [pages, setPages] = useState(0); const [zoom, setZoom] = useState(1);
   const [url, setURL] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(true);
   const worker = useRef<Worker>(null); const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const request = useRef(0);
   useEffect(() => {
     const parser = new Worker(new URL('./presentation.worker.ts', import.meta.url), { type: 'module' });
     worker.current = parser; let objectURL = '';
-    parser.onmessage = (event: MessageEvent<{ svg?: string; pages: number; error?: string }>) => {
+    parser.onmessage = (event: MessageEvent<{ requestId: number; svg?: string; pages: number; error?: string }>) => {
+      if (event.data.requestId !== request.current) return;
       clearTimeout(timer.current); setBusy(false);
       if (event.data.error) { setError(event.data.error); return; }
       if (objectURL) URL.revokeObjectURL(objectURL);
@@ -22,7 +24,7 @@ export default function PresentationPreview({ data }: { data: ArrayBuffer }) {
     setBusy(true);
     timer.current = setTimeout(() => { worker.current?.terminate(); setError('演示文稿解析超时，请拆分文件后重试。'); setBusy(false); }, 20_000);
     const copy = pages ? undefined : data.slice(0);
-    worker.current!.postMessage({ data: copy, page }, copy ? [copy] : []);
+    worker.current!.postMessage({ data: copy, page, requestId: ++request.current }, copy ? [copy] : []);
     return () => clearTimeout(timer.current);
   }, [data, page]);
   return <>

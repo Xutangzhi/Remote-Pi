@@ -57,6 +57,8 @@ button,input,textarea,summary,select { -webkit-app-region:no-drag!important; }
 .workspace-dialog input[type=checkbox] { flex:none; margin-top:4px; }
 .workspace-dialog .dialog-footer,.auth-dialog .dialog-footer { gap:10px; }
 .workspace-dialog .dialog-footer button,.auth-dialog .dialog-footer button { min-height:44px; }
+.document-controls button,.document-controls select,.sheet-selector select,.extension-prompt > input,.extension-prompt > select,.extension-prompt .button,.ask-form fieldset > input,.ask-form .button,.queued-message-row button { min-height:44px; }
+.ask-form fieldset > input,.extension-prompt > input { font-size:16px; }
 .unsupported-preview { padding:50px 30px; text-align:center; color:var(--text-secondary); }
 .unsupported-preview > span { font:60px Georgia,serif; }
 .unsupported-preview h1 { font-size:25px; margin:30px 0 16px; }

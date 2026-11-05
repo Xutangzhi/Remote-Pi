@@ -13,11 +13,22 @@ test('dialogs contain keyboard focus, preserve the draft, and ignore new-chat sh
   try {
     const page = await desktop.firstWindow();
     const shortcut = process.platform === 'darwin' ? 'Meta+n' : 'Control+n';
+    await page.getByTitle('使用说明', { exact: true }).click();
+    const help = page.getByRole('dialog', { name: '使用说明', exact: true });
+    await help.getByRole('button', { name: '开始连接', exact: false }).focus();
+    await page.keyboard.press('Tab');
+    await expect(help.getByLabel('关闭使用说明', { exact: true })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(help).toHaveCount(0);
+    await expect(page.getByTitle('使用说明', { exact: true })).toBeFocused();
     await page.getByLabel('服务器地址', { exact: true }).fill('127.0.0.1');
     await page.getByText('端口与私钥设置', { exact: false }).click();
     await page.getByLabel('SSH 端口', { exact: true }).fill(String(fixture.sshPort));
     await page.getByLabel('远端 Pi Web 端口', { exact: true }).fill(String(fixture.webPort));
     await page.getByRole('button', { name: '连接工作台', exact: true }).click();
+    await page.getByRole('button', { name: '信任并连接', exact: true }).focus();
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('dialog').getByRole('button', { name: '取消连接', exact: true })).toBeFocused();
     await page.getByRole('button', { name: '信任并连接', exact: true }).click();
     await page.getByLabel('SSH 验证响应').fill(TEST_PASSWORD);
     await page.getByRole('button', { name: '继续连接', exact: true }).click();
@@ -45,6 +56,8 @@ test('dialogs contain keyboard focus, preserve the draft, and ignore new-chat sh
     await page.getByRole('button', { name: '重命名对话', exact: true }).click();
     const rename = page.getByRole('dialog', { name: '重命名对话', exact: true });
     await rename.getByLabel('对话名称', { exact: true }).fill('尚未保存的名称');
+    await rename.getByLabel('对话名称', { exact: true }).dispatchEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true });
+    await expect(rename).toBeVisible();
     await page.keyboard.press(shortcut);
     await expect(rename).toBeVisible();
     await expect(rename.getByLabel('对话名称', { exact: true })).toHaveValue('尚未保存的名称');

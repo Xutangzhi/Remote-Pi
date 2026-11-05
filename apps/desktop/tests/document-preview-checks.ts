@@ -35,6 +35,20 @@ export async function checkDocumentPreviews(page: Page, open: (path: string) => 
     const original = URL.createObjectURL;
     URL.createObjectURL = (blob) => { if (blob instanceof Blob && blob.type === 'image/svg+xml') void blob.text().then((text) => { (window as any).__slideText = text; }); return original(blob); };
   });
+  await page.evaluate(() => {
+    const w = window as any; const NativeWorker = window.Worker;
+    w.__pendingSlides = [];
+    window.Worker = class extends NativeWorker {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        if (String(url).includes('presentation.worker')) Object.defineProperty(this, 'onmessage', { set: (listener: (event: MessageEvent) => void) => {
+          this.addEventListener('message', (event) => {
+            if (w.__holdSlideResponses) w.__pendingSlides.push(() => listener(event)); else listener(event);
+          });
+        } });
+      }
+    };
+  });
   await open('preview.pptx');
   const slide = page.locator('.presentation-preview img');
   await expect(slide).toHaveAttribute('alt', 'PPT 第 1 页');
@@ -43,6 +57,17 @@ export async function checkDocumentPreviews(page: Page, open: (path: string) => 
   await capture?.('ppt');
   await expect.poll(svg).toContain('中文 PPT 第1页');
   expect(await svg()).toContain('data:image/png;base64,');
+  const firstSlide = await svg();
+  await page.evaluate(() => { (window as any).__holdSlideResponses = true; });
+  await page.getByRole('button', { name: '下一页', exact: true }).click();
+  await page.getByRole('button', { name: '上一页', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__pendingSlides.length)).toBe(2);
+  await page.evaluate(() => (window as any).__pendingSlides.shift()());
+  await expect(page.locator('.presentation-preview .panel-loading')).toBeVisible();
+  await expect(slide).toHaveCount(0);
+  await page.evaluate(() => { const w = window as any; w.__holdSlideResponses = false; w.__pendingSlides.shift()(); });
+  await expect(slide).toHaveAttribute('alt', 'PPT 第 1 页');
+  await expect.poll(svg).toBe(firstSlide);
   await page.getByRole('button', { name: '下一页', exact: true }).click();
   await expect(slide).toHaveAttribute('alt', 'PPT 第 2 页');
   await expect.poll(svg).toContain('中文 PPT 第2页');

@@ -77,8 +77,8 @@ function ToolCard({ tool, session, onError, allowAsk }: { allowAsk: boolean; too
 }
 
 function AskForm({ request, session, onError }: { request: AskRequest; session: SessionRef; onError: (error: unknown) => void }) {
-  const [answers, setAnswers] = useState<Record<string, string[]>>({});
-  const [other, setOther] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState(() => new Map<string, string[]>());
+  const [other, setOther] = useState(() => new Map<string, string>());
   const [sent, setSent] = useState<'submitted' | 'cancelled'>();
   const [busy, setBusy] = useState(false);
   const submit = async (cancel = false) => {
@@ -87,8 +87,8 @@ function AskForm({ request, session, onError }: { request: AskRequest; session: 
     try {
       await piRequest('session.ask', { ...sessionInput(session), askId: request.askId, ...(cancel ? { cancel: true } : {
         answers: request.questions.map((question) => {
-          const otherText = other[question.id]?.trim();
-          return { id: question.id, values: otherText && !question.multiple ? [] : answers[question.id] || [], ...(otherText ? { otherText } : {}) };
+          const otherText = other.get(question.id)?.trim();
+          return { id: question.id, values: otherText && !question.multiple ? [] : answers.get(question.id) || [], ...(otherText ? { otherText } : {}) };
         }),
       }) });
       setSent(cancel ? 'cancelled' : 'submitted');
@@ -97,19 +97,19 @@ function AskForm({ request, session, onError }: { request: AskRequest; session: 
   };
   if (sent) return <div className="ask-form muted">{sent === 'cancelled' ? '已取消回答' : '回答已提交'}</div>;
   return <form className="ask-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>{request.questions.map((question) => <fieldset key={question.id} disabled={busy}><legend>{question.question}</legend>{question.detail && <p>{question.detail}</p>}{question.options.map((option) => <label className="ask-option" key={option.value}>
-    <input type={question.multiple ? 'checkbox' : 'radio'} name={`${request.askId}:${question.id}`} checked={answers[question.id]?.includes(option.value) || false}
-      onClick={() => { if (!question.multiple && answers[question.id]?.includes(option.value)) setAnswers((previous) => ({ ...previous, [question.id]: [] })); }}
+    <input type={question.multiple ? 'checkbox' : 'radio'} name={`${request.askId}:${question.id}`} checked={answers.get(question.id)?.includes(option.value) || false}
+      onClick={() => { if (!question.multiple && answers.get(question.id)?.includes(option.value)) setAnswers((previous) => new Map(previous).set(question.id, [])); }}
       onChange={(event) => {
         const checked = event.target.checked;
-        setAnswers((previous) => ({ ...previous, [question.id]: question.multiple ? checked ? [...previous[question.id] || [], option.value] : (previous[question.id] || []).filter((value) => value !== option.value) : [option.value] }));
-        if (!question.multiple) setOther((previous) => ({ ...previous, [question.id]: '' }));
+        setAnswers((previous) => new Map(previous).set(question.id, question.multiple ? checked ? [...previous.get(question.id) || [], option.value] : (previous.get(question.id) || []).filter((value) => value !== option.value) : [option.value]));
+        if (!question.multiple) setOther((previous) => new Map(previous).set(question.id, ''));
       }} />
     <span>{option.label}{option.detail && <small>{option.detail}</small>}</span>
-  </label>)}<input placeholder={question.multiple ? '补充回答…' : '或输入自定义回答…'} aria-label={`${question.question} 补充回答`} maxLength={4000} value={other[question.id] || ''} onChange={(event) => {
+  </label>)}<input placeholder={question.multiple ? '补充回答…' : '或输入自定义回答…'} aria-label={`${question.question} 补充回答`} maxLength={4000} value={other.get(question.id) || ''} onChange={(event) => {
     const value = event.target.value;
-    setOther((previous) => ({ ...previous, [question.id]: value }));
-    if (!question.multiple && value.trim()) setAnswers((previous) => ({ ...previous, [question.id]: [] }));
-  }} /></fieldset>)}<div className="dialog-footer"><button type="button" className="button secondary" disabled={busy} onClick={() => void submit(true)}>取消</button><button className="button primary" disabled={busy || !request.questions.every((question) => answers[question.id]?.length || other[question.id]?.trim())}>提交回答</button></div></form>;
+    setOther((previous) => new Map(previous).set(question.id, value));
+    if (!question.multiple && value.trim()) setAnswers((previous) => new Map(previous).set(question.id, []));
+  }} /></fieldset>)}<div className="dialog-footer"><button type="button" className="button secondary" disabled={busy} onClick={() => void submit(true)}>取消</button><button className="button primary" disabled={busy || !request.questions.every((question) => answers.get(question.id)?.length || other.get(question.id)?.trim())}>提交回答</button></div></form>;
 }
 
 export function Transcript({ items, session, onError, onOpenFile, onCheckFile }: { items: TranscriptItem[]; session: SessionRef; onError: (error: unknown) => void } & FileLinks) {

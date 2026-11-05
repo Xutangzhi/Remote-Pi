@@ -9,7 +9,10 @@ export class NativeSocket {
   constructor(url: string) {
     const parsed = new URL(url);
     NativeSocket.sockets.set(this.id, this);
-    void native.openSocket({ id: this.id, path: parsed.pathname + parsed.search }).catch(() => NativeSocket.receive({ id: this.id, type: 'error' }));
+    void native.openSocket({ id: this.id, path: parsed.pathname + parsed.search }).then(async () => {
+      // The native open job can run after closeSocket has already returned.
+      if (this.readyState === 3) await native.closeSocket({ id: this.id });
+    }).catch(() => NativeSocket.receive({ id: this.id, type: 'error' }));
   }
   addEventListener(type: string, listener: Listener): void { if (!this.listeners.has(type)) this.listeners.set(type, new Set()); this.listeners.get(type)!.add(listener); }
   private emit(type: string, data?: string): void { for (const listener of this.listeners.get(type) || []) listener({ data }); }
